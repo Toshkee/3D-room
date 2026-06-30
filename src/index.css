@@ -1,0 +1,458 @@
+:root {
+  --base: #0a0713;
+  --ink: #f3eafe;
+  --magenta: #ff3df0;
+  --cyan: #4dd2ff;
+  /* Overridden inline per selected project. */
+  --accent: #4dd2ff;
+
+  font-family: 'Space Grotesk', 'Inter', system-ui, -apple-system, 'Segoe UI',
+    Roboto, sans-serif;
+  color: var(--ink);
+  color-scheme: dark;
+
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Visually hidden, but available to screen readers (used by the card's
+   aria-live announcer). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  width: 100%;
+}
+
+body {
+  background: var(--base);
+  overflow: hidden;
+  /* Don't let the browser hijack touch gestures meant for the 3D scene. */
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+/* ---- App shell ----------------------------------------------------------- */
+
+.app {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+.app canvas {
+  display: block;
+  touch-action: none;
+}
+
+/* The whole overlay layer sits above the canvas but ignores pointer events,
+   so dragging/pinching the scene still works. Individual controls opt back
+   in with `pointer-events: auto`. */
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: clamp(16px, 3.5vw, 34px);
+  /* Respect notches / safe areas on mobile (incl. landscape side notches). */
+  padding-top: max(clamp(16px, 3.5vw, 34px), env(safe-area-inset-top));
+  padding-bottom: max(clamp(16px, 3.5vw, 34px), env(safe-area-inset-bottom));
+  padding-left: max(clamp(16px, 3.5vw, 34px), env(safe-area-inset-left));
+  padding-right: max(clamp(16px, 3.5vw, 34px), env(safe-area-inset-right));
+}
+
+/* Visually-hidden keyboard/screen-reader nav for the pods; each button
+   reveals as a focus pill when tabbed to. */
+.pod-nav {
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.pod-nav button {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+  background: transparent;
+  color: transparent;
+}
+
+.pod-nav button:focus-visible {
+  pointer-events: auto;
+  position: fixed;
+  top: max(12px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: 9px 16px;
+  clip-path: none;
+  border-radius: 999px;
+  background: rgba(12, 8, 24, 0.92);
+  border: 1px solid var(--accent);
+  box-shadow: 0 0 22px -6px var(--accent);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  outline: none;
+}
+
+/* ---- HUD ----------------------------------------------------------------- */
+
+.hud-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.brand {
+  user-select: none;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: clamp(20px, 4.5vw, 34px);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  background: linear-gradient(100deg, var(--magenta), var(--cyan));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 0 28px rgba(255, 61, 240, 0.35);
+}
+
+.brand p {
+  margin: 4px 0 0;
+  font-size: clamp(11px, 2.4vw, 13px);
+  letter-spacing: 0.05em;
+  color: rgba(243, 234, 254, 0.62);
+}
+
+.hint {
+  pointer-events: none;
+  text-align: right;
+  font-size: clamp(10px, 2.2vw, 12px);
+  line-height: 1.7;
+  letter-spacing: 0.04em;
+  color: rgba(243, 234, 254, 0.62);
+  user-select: none;
+}
+
+.hint kbd {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 6px;
+  border: 1px solid rgba(243, 234, 254, 0.18);
+  background: rgba(243, 234, 254, 0.06);
+  font-family: inherit;
+  font-size: 0.92em;
+  color: var(--ink);
+}
+
+/* ---- Slide-up project card ---------------------------------------------- */
+
+.card-dock {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+.card {
+  pointer-events: auto;
+  width: min(560px, 100%);
+  border-radius: 22px;
+  padding: 22px 24px 24px;
+  position: relative;
+  overflow: hidden;
+
+  background: linear-gradient(
+    160deg,
+    rgba(28, 19, 48, 0.86),
+    rgba(12, 8, 24, 0.92)
+  );
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.03),
+    0 18px 60px rgba(0, 0, 0, 0.55),
+    0 0 46px -8px color-mix(in srgb, var(--accent) 60%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  backdrop-filter: blur(18px) saturate(140%);
+
+  transform: translateY(140%);
+  opacity: 0;
+  transition:
+    transform 0.46s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.3s ease;
+}
+
+.card.open {
+  transform: translateY(0);
+  opacity: 1;
+}
+
+/* The card is focused programmatically for screen readers — don't draw a ring. */
+.card:focus,
+.card:focus-visible {
+  outline: none;
+}
+
+/* Accent wash along the top edge of the card. */
+.card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--accent),
+    transparent
+  );
+  opacity: 0.9;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.card-chip {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 13px;
+  /* Prefer a symbol font so glyphs render monochrome + accent-colored,
+     not as inconsistent OS emoji. */
+  font-family: 'Apple Symbols', 'Segoe UI Symbol', 'Noto Sans Symbols 2', inherit;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  box-shadow: 0 0 20px -4px color-mix(in srgb, var(--accent) 70%, transparent);
+  text-shadow: 0 0 12px var(--accent);
+}
+
+.card-titles {
+  min-width: 0;
+  flex: 1;
+}
+
+.card-titles h2 {
+  margin: 0;
+  font-size: clamp(18px, 4vw, 23px);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.card-titles .tag {
+  margin-top: 3px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.card-close {
+  flex: none;
+  pointer-events: auto;
+  position: relative;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid rgba(243, 234, 254, 0.18);
+  background: rgba(243, 234, 254, 0.05);
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background 0.2s ease,
+    transform 0.2s ease;
+}
+
+/* Extend the tap target to 44x44 (touch min) without changing the visual. */
+.card-close::before {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+}
+
+.card-close:hover {
+  background: rgba(243, 234, 254, 0.12);
+  transform: rotate(90deg);
+}
+
+.card-media {
+  margin-top: 16px;
+  border-radius: 12px;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  box-shadow: 0 8px 24px -12px rgba(0, 0, 0, 0.7);
+}
+
+.card-media img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.card-blurb {
+  margin: 16px 0 0;
+  font-size: 14.5px;
+  line-height: 1.62;
+  color: rgba(243, 234, 254, 0.82);
+}
+
+.card-actions {
+  margin-top: 20px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.btn-open {
+  pointer-events: auto;
+  appearance: none;
+  text-decoration: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 18px;
+  border-radius: 12px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--base);
+  background: linear-gradient(
+    100deg,
+    var(--accent),
+    color-mix(in srgb, var(--accent) 55%, #ffffff)
+  );
+  border: none;
+  box-shadow: 0 8px 24px -6px color-mix(in srgb, var(--accent) 80%, transparent);
+  transition:
+    transform 0.16s ease,
+    box-shadow 0.2s ease,
+    filter 0.2s ease;
+}
+
+.btn-open:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.06);
+  box-shadow: 0 12px 30px -6px color-mix(in srgb, var(--accent) 90%, transparent);
+}
+
+.btn-open:active {
+  transform: translateY(0);
+}
+
+.btn-open[aria-disabled='true'] {
+  cursor: default;
+  filter: grayscale(0.4) brightness(0.85);
+  box-shadow: none;
+}
+
+.btn-open .arrow {
+  transition: transform 0.18s ease;
+}
+
+.btn-open:hover .arrow {
+  transform: translateX(3px);
+}
+
+.soon {
+  font-size: 12.5px;
+  letter-spacing: 0.04em;
+  color: rgba(243, 234, 254, 0.62);
+}
+
+/* ---- Loading veil -------------------------------------------------------- */
+
+.loader {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: var(--base);
+  color: rgba(243, 234, 254, 0.7);
+  font-size: 13px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  transition: opacity 0.6s ease;
+}
+
+.loader.hide {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.loader .pulse {
+  display: inline-block;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card,
+  .card-close,
+  .btn-open,
+  .btn-open .arrow,
+  .loader {
+    transition: none;
+  }
+  .loader .pulse {
+    animation: none;
+  }
+}
