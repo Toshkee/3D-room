@@ -7,11 +7,11 @@ export function Effects({ dark }: { dark: boolean }) {
   return (
     <EffectComposer multisampling={4}>
       <Bloom
-        intensity={dark ? 0.95 : 0.5}
-        luminanceThreshold={0.72}
+        intensity={dark ? 0.95 : 0.62}
+        luminanceThreshold={dark ? 0.72 : 0.68}
         luminanceSmoothing={0.9}
         mipmapBlur
-        radius={0.7}
+        radius={0.72}
       />
       <Vignette offset={0.3} darkness={dark ? 0.55 : 0.32} />
     </EffectComposer>

@@ -14,6 +14,7 @@ export function ChatThread({
   reducedMotion,
   placeholder = 'Message…',
   showAuthors = false,
+  suggestions,
 }: {
   messages: Message[]
   bots: Bot[]
@@ -21,6 +22,7 @@ export function ChatThread({
   reducedMotion: boolean
   placeholder?: string
   showAuthors?: boolean
+  suggestions?: string[]
 }) {
   const [text, setText] = useState('')
   const listRef = useRef<HTMLDivElement>(null)
@@ -42,7 +44,29 @@ export function ChatThread({
   return (
     <div className="chat">
       <div className="chat__list" ref={listRef}>
-        {messages.length === 0 && <p className="feed__empty">No messages yet — say hi 👋</p>}
+        {messages.length === 0 && (
+          <div className="chat__empty">
+            <p className="feed__empty">
+              {suggestions && suggestions.length > 0
+                ? 'No messages yet — try one of these:'
+                : 'No messages yet — say hi 👋'}
+            </p>
+            {suggestions && suggestions.length > 0 && (
+              <div className="suggestions">
+                {suggestions.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    className="suggestion"
+                    onClick={() => onSend(s)}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         {messages.map((m, i) => {
           const mine = m.from === 'user'
           const bot = mine ? null : byId.get(m.from)

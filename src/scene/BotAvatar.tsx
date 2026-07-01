@@ -6,6 +6,7 @@ import type { Bot } from '../types'
 import { SEATS } from '../data/bots'
 import { ROAM, chooseGoal, nearestNode, node, pathTo, type Occupancy } from '../data/roam'
 import { StatusPill } from '../components/StatusPill'
+import { ROLE_ICON } from '../components/icons'
 import { SoftShadow } from './softShadow'
 import { hash01, mixHex } from '../util'
 
@@ -41,6 +42,7 @@ export function BotAvatar({
   occupancy: { current: Occupancy }
 }) {
   const phase = hash01(bot.id) * Math.PI * 2
+  const RoleIcon = ROLE_ICON[bot.role]
 
   const rootG = useRef<THREE.Group>(null)
   const scaleG = useRef<THREE.Group>(null)
@@ -297,7 +299,10 @@ export function BotAvatar({
           onClick={() => onSelect(bot.id)}
         >
           <StatusPill status={bot.status} floating />
-          <span className="bot-badge__name">{bot.name}</span>
+          <span className="bot-badge__name">
+            <RoleIcon className="bot-badge__role" size={12} strokeWidth={2.6} />
+            {bot.name}
+          </span>
         </button>
       </Html>
     </group>

@@ -1,6 +1,7 @@
 import { useLounge } from '../state/LoungeContext'
 import { Avatar } from './Avatar'
 import { ChatThread } from './ChatThread'
+import { TEAM_STARTERS } from '../data/prompts'
 
 // The shared channel where the bots talk to each other — and where the human
 // can jump in. Same ChatThread as 1:1, with author labels on.
@@ -28,6 +29,7 @@ export function GroupChat() {
         reducedMotion={reducedMotion}
         placeholder="Message the team…"
         showAuthors
+        suggestions={TEAM_STARTERS}
       />
     </div>
   )

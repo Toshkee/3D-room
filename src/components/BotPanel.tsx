@@ -7,6 +7,7 @@ import { ProgressBar } from './ProgressBar'
 import { ActivityFeed } from './ActivityFeed'
 import { ChatThread } from './ChatThread'
 import { ROLE_ICON, X } from './icons'
+import { botStarters } from '../data/prompts'
 
 // The slide-in detail panel for one bot: identity + live task, an activity feed
 // on top, and a 1:1 chat underneath. Shown as an overlay in any view.
@@ -78,6 +79,7 @@ export function BotPanel() {
           onSend={(t) => sendChat(bot.id, t)}
           reducedMotion={reducedMotion}
           placeholder={`Message ${bot.name}…`}
+          suggestions={botStarters(bot)}
         />
       </section>
     </aside>

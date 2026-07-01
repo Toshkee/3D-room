@@ -61,6 +61,8 @@ export interface RoomPalette {
   gridSection: string
   hemiSky: string
   hemiGround: string
+  keyColor: string
+  fillColor: string
   ambient: number
   dirLight: number
   fill: number
@@ -69,33 +71,35 @@ export interface RoomPalette {
 
 export const ROOM: Record<Theme, RoomPalette> = {
   light: {
-    floor: '#f0e9de',
-    floorAlt: '#e7ddcf',
-    rug: '#d7cff5',
-    wallBack: '#f0ebfc',
-    wallLeft: '#e8e2f8',
-    sofa: '#c3bceb',
-    sofaCushion: '#dad3f6',
-    wood: '#caa987',
-    desk: '#b6a6ee',
-    cabinet: '#4a4270',
-    cabinetTop: '#332c52',
-    plantPot: '#cf9070',
-    plantLeaf: '#57b78a',
-    screen: '#241d3c',
-    frame: '#f9f6ff',
+    floor: '#f2e8d5',
+    floorAlt: '#e2d2b8',
+    rug: '#cbb8f3',
+    wallBack: '#ece4fb',
+    wallLeft: '#dbd2f4',
+    sofa: '#b6ade8',
+    sofaCushion: '#d3cbf7',
+    wood: '#c99d70',
+    desk: '#a596ee',
+    cabinet: '#443c6e',
+    cabinetTop: '#2e2750',
+    plantPot: '#d18d67',
+    plantLeaf: '#4cb485',
+    screen: '#221b3a',
+    frame: '#fdfaff',
     neonA: '#6d5efc',
     neonB: '#ff5fa2',
     neonC: '#2aa7ff',
     cove: '#8b7bff',
-    gridCell: '#ded5f2',
-    gridSection: '#c6b6ee',
-    hemiSky: '#ffffff',
-    hemiGround: '#d8cfe6',
-    ambient: 0.65,
-    dirLight: 0.9,
-    fill: 0.4,
-    fog: '#ece6f9',
+    gridCell: '#d6cbef',
+    gridSection: '#bfaeec',
+    hemiSky: '#fff6ea',
+    hemiGround: '#d2c5ec',
+    keyColor: '#fff2dc',
+    fillColor: '#c7daff',
+    ambient: 0.5,
+    dirLight: 1.15,
+    fill: 0.5,
+    fog: '#e9e2f6',
   },
   dark: {
     floor: '#221a42',
@@ -121,9 +125,11 @@ export const ROOM: Record<Theme, RoomPalette> = {
     gridSection: '#5f4dbb',
     hemiSky: '#6a5da8',
     hemiGround: '#120e28',
-    ambient: 0.62,
-    dirLight: 0.85,
-    fill: 0.55,
+    keyColor: '#cabaff',
+    fillColor: '#3f57c9',
+    ambient: 0.58,
+    dirLight: 0.9,
+    fill: 0.62,
     fog: '#0c0920',
   },
 }
