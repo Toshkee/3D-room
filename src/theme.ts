@@ -1,55 +1,129 @@
-/**
- * Theme + room constants for the photoreal gaming lounge.
- *
- * The 3D scene is no longer neon-stylized — it's lit by an HDRI environment and
- * real shadow-casting lights (see `Lighting.tsx`). Each project keeps its accent
- * color, but inside the room that accent only drives *artificial* light sources
- * (a gamer's monitor glow, their RGB desk strip), not flat neon paint.
- *
- * The HUD / card chrome (`index.css`) keeps a tasteful neon look — that's UI.
- */
+import type { Role, Theme } from './types'
 
-/** CSS color strings (UI chrome + a few scene tints). */
-export const PALETTE = {
-  base: '#0a0713',
-  ink: '#f3eafe',
-  muted: '#b39dff',
-  magenta: '#ff3df0',
-  cyan: '#4dd2ff',
-} as const
+// One global accent (indigo/violet) — active UI states, focus, brand, primary
+// buttons. Per-bot accents live on each Bot.
+export const ACCENT = '#6d5efc'
 
-/** THREE-friendly numeric colors for the room's physical surfaces (kept dark
- *  and desaturated so the colored screens + RGB strips read against them). */
-export const HEX = {
-  magenta: 0xff3df0,
-  cyan: 0x4dd2ff,
+// Per-role presentation: a human label + a sensible default accent the import
+// form pre-fills. (Role icons come from lucide — see components/icons.tsx.)
+export const ROLE_META: Record<Role, { label: string; accent: string }> = {
+  engineer: { label: 'Engineer', accent: '#6d5efc' },
+  researcher: { label: 'Researcher', accent: '#2aa7ff' },
+  designer: { label: 'Designer', accent: '#ff5fa2' },
+  writer: { label: 'Writer', accent: '#14b8a6' },
+  analyst: { label: 'Analyst', accent: '#f5a524' },
+  coordinator: { label: 'Coordinator', accent: '#22c55e' },
+}
 
-  floor: 0x2a2029, // warm dark engineered wood
-  carpet: 0x241f2b,
-  wall: 0x211d28,
-  wallLow: 0x191620, // wainscot / lower wall
-  ceiling: 0x141019,
-  trim: 0x0e0c13,
-  desk: 0x2a2630,
-  deskTop: 0x201d26,
-  metal: 0x3a3741,
-  plasticDark: 0x17151c,
-  chair: 0x1b1920,
-} as const
+export const ROLES: Role[] = [
+  'engineer',
+  'researcher',
+  'designer',
+  'writer',
+  'analyst',
+  'coordinator',
+]
 
-/** Interior dimensions, in meters. Floor sits at y = 0. */
-export const ROOM = {
-  W: 19, // x extent → interior x ∈ [-9.5, 9.5]
-  D: 16, // z extent → interior z ∈ [-8, 8]; the +z (front) side is open for the camera
-  H: 4.2, // wall height
-} as const
-export const HALF_W = ROOM.W / 2
-export const HALF_D = ROOM.D / 2
+export const ACCENT_SWATCHES = [
+  '#6d5efc',
+  '#2aa7ff',
+  '#14b8a6',
+  '#22c55e',
+  '#f5a524',
+  '#ff7a45',
+  '#ff5fa2',
+  '#a35bff',
+]
 
-/** Vendored CC0 assets (paths respect Vite's base so sub-path hosting works). */
-const BASE = import.meta.env.BASE_URL
-/** Soldier ("Vanguard") — rigged humanoid with Idle/Walk/Run clips; the gamers
- *  are clones of this, tinted per project accent, that walk in and settle. */
-export const HUMAN_URL = `${BASE}models/Soldier.glb`
-/** Interior HDRI for image-based lighting + reflections. */
-export const HDRI_URL = `${BASE}hdri/lebombo.hdr`
+// Room / furniture colors for the 3D scene, per theme. Flat, stylized, playful —
+// not PBR. Neon fields drive the arcade glow (emissive, toneMapped off).
+export interface RoomPalette {
+  floor: string
+  floorAlt: string
+  rug: string
+  wallBack: string
+  wallLeft: string
+  sofa: string
+  sofaCushion: string
+  wood: string
+  desk: string
+  cabinet: string
+  cabinetTop: string
+  plantPot: string
+  plantLeaf: string
+  screen: string
+  frame: string
+  neonA: string
+  neonB: string
+  neonC: string
+  cove: string
+  gridCell: string
+  gridSection: string
+  hemiSky: string
+  hemiGround: string
+  ambient: number
+  dirLight: number
+  fill: number
+  fog: string
+}
+
+export const ROOM: Record<Theme, RoomPalette> = {
+  light: {
+    floor: '#f0e9de',
+    floorAlt: '#e7ddcf',
+    rug: '#d7cff5',
+    wallBack: '#f0ebfc',
+    wallLeft: '#e8e2f8',
+    sofa: '#c3bceb',
+    sofaCushion: '#dad3f6',
+    wood: '#caa987',
+    desk: '#b6a6ee',
+    cabinet: '#4a4270',
+    cabinetTop: '#332c52',
+    plantPot: '#cf9070',
+    plantLeaf: '#57b78a',
+    screen: '#241d3c',
+    frame: '#f9f6ff',
+    neonA: '#6d5efc',
+    neonB: '#ff5fa2',
+    neonC: '#2aa7ff',
+    cove: '#8b7bff',
+    gridCell: '#ded5f2',
+    gridSection: '#c6b6ee',
+    hemiSky: '#ffffff',
+    hemiGround: '#d8cfe6',
+    ambient: 0.65,
+    dirLight: 0.9,
+    fill: 0.4,
+    fog: '#ece6f9',
+  },
+  dark: {
+    floor: '#221a42',
+    floorAlt: '#1b1436',
+    rug: '#31266a',
+    wallBack: '#1d1642',
+    wallLeft: '#160f34',
+    sofa: '#41347a',
+    sofaCushion: '#50429a',
+    wood: '#5a4570',
+    desk: '#3e3080',
+    cabinet: '#2c2364',
+    cabinetTop: '#1d1648',
+    plantPot: '#5c4a76',
+    plantLeaf: '#49ac88',
+    screen: '#0b0818',
+    frame: '#352a63',
+    neonA: '#9a8bff',
+    neonB: '#ff79b6',
+    neonC: '#4fbdff',
+    cove: '#a294ff',
+    gridCell: '#33285e',
+    gridSection: '#5f4dbb',
+    hemiSky: '#6a5da8',
+    hemiGround: '#120e28',
+    ambient: 0.62,
+    dirLight: 0.85,
+    fill: 0.55,
+    fog: '#0c0920',
+  },
+}

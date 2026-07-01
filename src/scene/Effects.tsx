@@ -1,23 +1,19 @@
 import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing'
-import { LOW_POWER } from '../lowPower'
 
-/**
- * Restrained post for the photoreal look: a high-threshold bloom so ONLY the
- * bright emissive sources (monitors, RGB strips, LED cove, ceiling panels)
- * glow — the lit PBR surfaces stay grounded — plus a soft vignette. Tone mapping
- * (ACES) is set on the renderer in App.
- */
-export function Effects() {
+// Restrained bloom so only the bright emissive sources (neon cove, arcade
+// screens, monitors, robot eyes/antenna) actually glow — the arcade mood. A
+// high luminance threshold keeps the matte furniture and pastels from washing out.
+export function Effects({ dark }: { dark: boolean }) {
   return (
-    <EffectComposer multisampling={LOW_POWER ? 2 : 4}>
+    <EffectComposer multisampling={4}>
       <Bloom
+        intensity={dark ? 0.95 : 0.5}
+        luminanceThreshold={0.72}
+        luminanceSmoothing={0.9}
         mipmapBlur
-        intensity={0.7}
-        luminanceThreshold={0.9}
-        luminanceSmoothing={0.25}
-        radius={0.6}
+        radius={0.7}
       />
-      <Vignette offset={0.3} darkness={0.55} />
+      <Vignette offset={0.3} darkness={dark ? 0.55 : 0.32} />
     </EffectComposer>
   )
 }
