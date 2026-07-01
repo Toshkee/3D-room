@@ -59,6 +59,7 @@ export interface RoomPalette {
   cove: string
   gridCell: string
   gridSection: string
+  zoneWork: string
   hemiSky: string
   hemiGround: string
   keyColor: string
@@ -92,6 +93,7 @@ export const ROOM: Record<Theme, RoomPalette> = {
     cove: '#8b7bff',
     gridCell: '#d6cbef',
     gridSection: '#bfaeec',
+    zoneWork: '#d1d6f0',
     hemiSky: '#fff6ea',
     hemiGround: '#d2c5ec',
     keyColor: '#fff2dc',
@@ -123,6 +125,7 @@ export const ROOM: Record<Theme, RoomPalette> = {
     cove: '#a294ff',
     gridCell: '#33285e',
     gridSection: '#5f4dbb',
+    zoneWork: '#251e4c',
     hemiSky: '#6a5da8',
     hemiGround: '#120e28',
     keyColor: '#cabaff',

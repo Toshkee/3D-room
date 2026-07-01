@@ -14,6 +14,8 @@ export interface RNode {
   kind: NodeKind
   /** Yaw the bot faces while dwelling here (undefined → face the camera). */
   face?: number
+  /** If set, the bot sits here — its body rises by this many units onto a seat. */
+  sit?: number
 }
 
 const PI = Math.PI
@@ -27,6 +29,13 @@ export const NODES: RNode[] = [
   { id: 'd2', pos: [-8.0, 3.2], kind: 'desk', face: -PI / 2 },
   { id: 'l0', pos: [2.8, 1.9], kind: 'lounge', face: PI },
   { id: 'l1', pos: [5.0, 1.9], kind: 'lounge', face: PI },
+  // Seats — bots actually sit ON the furniture (sofa / armchair / beanbag),
+  // facing out toward the wall screen. `sit` lifts the body onto the cushion.
+  { id: 's0', pos: [2.95, 3.05], kind: 'lounge', face: PI, sit: 0.4 },
+  { id: 's1', pos: [4.0, 3.0], kind: 'lounge', face: PI, sit: 0.4 },
+  { id: 's2', pos: [5.05, 3.05], kind: 'lounge', face: PI, sit: 0.4 },
+  { id: 's3', pos: [7.6, 3.4], kind: 'lounge', face: -2.2, sit: 0.4 },
+  { id: 's4', pos: [1.3, 4.7], kind: 'lounge', face: 2.5, sit: 0.26 },
   { id: 'm0', pos: [-2.0, -0.6], kind: 'mingle' },
   { id: 'm1', pos: [-5.0, -1.5], kind: 'mingle' },
   { id: 'm2', pos: [-0.5, -3.6], kind: 'mingle' },
@@ -56,6 +65,16 @@ const EDGES: [string, string][] = [
   ['m4', 'l0'],
   ['m5', 'l0'],
   ['l0', 'l1'],
+  // seats hang off the lounge hub (segments stay clear of the coffee table)
+  ['s0', 'l0'],
+  ['s1', 'l0'],
+  ['s1', 'l1'],
+  ['s2', 'l1'],
+  ['s0', 's1'],
+  ['s1', 's2'],
+  ['s3', 'l1'],
+  ['s4', 'l0'],
+  ['s4', 'm4'],
 ]
 
 export const ADJ: Record<string, string[]> = (() => {

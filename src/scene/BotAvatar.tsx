@@ -7,7 +7,6 @@ import { SEATS } from '../data/bots'
 import { ROAM, chooseGoal, nearestNode, node, pathTo, type Occupancy } from '../data/roam'
 import { StatusPill } from '../components/StatusPill'
 import { ROLE_ICON } from '../components/icons'
-import { SoftShadow } from './softShadow'
 import { hash01, mixHex } from '../util'
 
 const EYE = '#8ff0ff'
@@ -169,10 +168,16 @@ export function BotAvatar({
     // Apply transforms.
     if (rootG.current) rootG.current.position.set(f.pos.x, 0, f.pos.z)
 
+    // Sitting: at a seat node while dwelling, the body rises onto the cushion.
+    // The floor ring + shadow stay grounded (they live outside scaleG).
+    const dwellNode = node(f.current)
+    const sitting = !selected && !moving && f.mode === 'dwell' && dwellNode.sit != null
+    const seatLift = sitting ? dwellNode.sit! : 0
+
     if (bodyG.current) {
       const g = bodyG.current
       const bobSpeed = moving ? 8 : active ? 3.1 : 2
-      const bobAmt = moving ? 0.05 : active ? 0.07 : 0.045
+      const bobAmt = moving ? 0.05 : sitting ? 0.02 : active ? 0.07 : 0.045
       g.position.y = reducedMotion ? 0 : Math.sin(t * bobSpeed + phase) * bobAmt
       g.rotation.z = reducedMotion ? 0 : Math.sin(t * 1.4 + phase) * 0.05
       if (faceYaw != null) {
@@ -205,6 +210,7 @@ export function BotAvatar({
     if (scaleG.current) {
       const target = hovered || selected ? 1.09 : 1
       scaleG.current.scale.setScalar(THREE.MathUtils.lerp(scaleG.current.scale.x, target, 0.15))
+      scaleG.current.position.y = THREE.MathUtils.lerp(scaleG.current.position.y, seatLift, 0.12)
     }
   })
 
@@ -231,7 +237,6 @@ export function BotAvatar({
 
   return (
     <group ref={rootG}>
-      <SoftShadow w={1.35} d={1.35} opacity={0.42} position={[0, 0.02, 0]} />
       <mesh ref={ring} rotation-x={-Math.PI / 2} position={[0, 0.08, 0]} renderOrder={2}>
         <ringGeometry args={[0.44, 0.6, 44]} />
         <meshBasicMaterial

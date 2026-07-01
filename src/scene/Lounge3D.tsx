@@ -1,5 +1,5 @@
-import { useRef } from 'react'
-import { Canvas } from '@react-three/fiber'
+import { useLayoutEffect, useRef } from 'react'
+import { Canvas, useThree } from '@react-three/fiber'
 import { Grid } from '@react-three/drei'
 import * as THREE from 'three'
 import { ROOM } from '../theme'
@@ -32,6 +32,7 @@ export function Lounge3D({
 
   return (
     <Canvas
+      shadows="soft"
       orthographic
       camera={{ position: [17, 14, 17], zoom: 40, near: 0.1, far: 400 }}
       dpr={[1, 2]}
@@ -66,7 +67,27 @@ export function Lounge3D({
           occupancy={occupancy}
         />
       ))}
+      <SceneShadows dep={bots.length} />
       <Effects dark={theme === 'dark'} />
     </Canvas>
   )
+}
+
+// Flip on cast+receive shadows for every solid mesh in the scene (furniture,
+// bots, floor, rugs). Skips transparent meshes — the grid, neon glow decals and
+// bot rings — so they don't stamp hard rectangular shadows. Re-runs when the
+// roster changes so imported bots get grounded too.
+function SceneShadows({ dep }: { dep: number }) {
+  const scene = useThree((s) => s.scene)
+  useLayoutEffect(() => {
+    scene.traverse((o) => {
+      const m = o as THREE.Mesh
+      if (!m.isMesh) return
+      const mat = m.material as THREE.Material | undefined
+      if (!mat || mat.transparent) return
+      m.castShadow = true
+      m.receiveShadow = true
+    })
+  }, [scene, dep])
+  return null
 }

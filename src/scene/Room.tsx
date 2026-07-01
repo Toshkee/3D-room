@@ -1,9 +1,8 @@
-import { useRef } from 'react'
+import { useMemo, useRef } from 'react'
 import { RoundedBox, Sparkles } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import type { RoomPalette } from '../theme'
-import { SoftShadow } from './softShadow'
 
 // The stylized isometric lounge — now much bigger, split into zones:
 //  • back wall: a row of arcade cabinets + a big wall screen + neon signage
@@ -11,7 +10,57 @@ import { SoftShadow } from './softShadow'
 //  • front-right: a sitting area (sofa / armchair / beanbag / coffee table) on a rug
 //  • center: an open accent rug where bots mingle
 // Everything is flat, geometric, low-poly. Colors come from the theme palette.
+// A soft radial-gradient sprite (white → transparent), tinted per-use. Used as
+// additive "glow pooling" so neon sources spill light onto the floor and wall.
+function makeGlowTexture(): THREE.Texture {
+  const s = 128
+  const c = document.createElement('canvas')
+  c.width = c.height = s
+  const ctx = c.getContext('2d')!
+  const g = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2)
+  g.addColorStop(0, 'rgba(255,255,255,1)')
+  g.addColorStop(0.45, 'rgba(255,255,255,0.32)')
+  g.addColorStop(1, 'rgba(255,255,255,0)')
+  ctx.fillStyle = g
+  ctx.fillRect(0, 0, s, s)
+  const tex = new THREE.CanvasTexture(c)
+  tex.needsUpdate = true
+  return tex
+}
+
+function GlowDecal({
+  tex,
+  position,
+  size,
+  color,
+  opacity = 0.5,
+  wall = false,
+}: {
+  tex: THREE.Texture
+  position: [number, number, number]
+  size: [number, number]
+  color: string
+  opacity?: number
+  wall?: boolean
+}) {
+  return (
+    <mesh position={position} rotation-x={wall ? 0 : -Math.PI / 2} renderOrder={1}>
+      <planeGeometry args={size} />
+      <meshBasicMaterial
+        map={tex}
+        color={color}
+        transparent
+        opacity={opacity}
+        blending={THREE.AdditiveBlending}
+        depthWrite={false}
+        toneMapped={false}
+      />
+    </mesh>
+  )
+}
+
 export function Room({ p }: { p: RoomPalette }) {
+  const glow = useMemo(makeGlowTexture, [])
   return (
     <group>
       {/* floor */}
@@ -28,6 +77,10 @@ export function Room({ p }: { p: RoomPalette }) {
         <circleGeometry args={[2.5, 48]} />
         <meshStandardMaterial color={p.rug} roughness={1} />
       </mesh>
+      {/* cool "work zone" runner grounding the desks along the left wall */}
+      <RoundedBox args={[3.4, 0.04, 8.6]} radius={0.12} smoothness={2} position={[-8.7, 0.03, 0]}>
+        <meshStandardMaterial color={p.zoneWork} roughness={1} />
+      </RoundedBox>
 
       {/* walls */}
       <mesh position={[0, 2.75, -9.15]}>
@@ -90,19 +143,13 @@ export function Room({ p }: { p: RoomPalette }) {
       <Plant position={[-10.2, 0, 7]} p={p} />
       <Plant position={[9.6, 0, 7]} p={p} small />
 
-      {/* soft grounding shadows (static — replaces flickery ContactShadows) */}
-      <SoftShadow w={4.6} d={2.1} position={[4, 0.02, 3.3]} opacity={0.4} />
-      <SoftShadow w={2.1} d={2.1} position={[7.9, 0.02, 3.7]} opacity={0.4} />
-      <SoftShadow w={2.0} d={2.0} position={[1.3, 0.02, 4.9]} opacity={0.38} />
-      <SoftShadow w={2.9} d={1.7} position={[4, 0.02, 1.0]} opacity={0.36} />
-      <SoftShadow w={3.3} d={2.1} position={[7.6, 0.02, -1.6]} opacity={0.4} />
-      <SoftShadow w={1.6} d={1.3} position={[8.7, 0.02, -7.3]} opacity={0.42} />
-      {[-6, -3.4, -0.8].map((x) => (
-        <SoftShadow key={x} w={1.4} d={1.1} position={[x, 0.02, -8.1]} opacity={0.42} />
-      ))}
-      {[-3.2, 0, 3.2].map((z) => (
-        <SoftShadow key={z} w={1.3} d={2.2} position={[-10.2, 0.02, z]} opacity={0.4} />
-      ))}
+      {/* neon light spill — additive glow pooling on the floor + bleeding onto
+          the back wall under each emissive source (bloom amplifies it) */}
+      <GlowDecal tex={glow} position={[4, 0.05, -7.4]} size={[9, 6]} color={p.neonC} opacity={0.58} />
+      <GlowDecal tex={glow} position={[4, 2.7, -8.8]} size={[7.4, 4.9]} color={p.neonC} opacity={0.4} wall />
+      <GlowDecal tex={glow} position={[-6, 0.05, -7.4]} size={[3, 3]} color={p.neonA} opacity={0.55} />
+      <GlowDecal tex={glow} position={[-3.4, 0.05, -7.4]} size={[3, 3]} color={p.neonB} opacity={0.55} />
+      <GlowDecal tex={glow} position={[-0.8, 0.05, -7.4]} size={[3, 3]} color={p.neonC} opacity={0.55} />
 
       {/* floating dust motes */}
       <Sparkles count={60} scale={[20, 6, 15]} position={[0, 3, -1]} size={2.4} speed={0.3} color={p.cove} opacity={0.5} />

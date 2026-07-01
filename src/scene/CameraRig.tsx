@@ -30,7 +30,7 @@ export function CameraRig({
   reducedMotion: boolean
 }) {
   const { size } = useThree()
-  const homeZoom = clamp(Math.min(size.width, size.height * 1.4) / 22, 16, 120)
+  const homeZoom = clamp(Math.min(size.width, size.height * 1.4) / 18, 16, 120)
   const [introDone, setIntroDone] = useState(reducedMotion)
 
   if (!introDone) {
