@@ -1,20 +1,20 @@
 import { HEX } from '../theme'
+import { LOUNGE } from '../data/lounge'
 
 // Believable, desaturated set-dressing colors (literals are fine for the soft
 // furnishings + foliage, the way Lounge.tsx names its fabrics).
 const POT = '#43352b' // dark terracotta planters
 const FOLIAGE = '#2f4a32' // matte leaves, lit by the room not glowing
 const FOLIAGE2 = '#3a5a3d'
-const CUSHION = '#332d3c' // matches the sofa fabric
 const GOLD = '#caa14a' // trophy cup — the one faint emissive accent on the shelf
 const BULB = '#ffcf9a' // warm pendant bulb
 
-// Potted plants tucked into the open corners (front + a back corner beside the
-// PC tower), well clear of the desks that ring the walls.
+// Potted plants tucked into the open corners + along a side wall, well clear of
+// the desks and the lounge nook.
 const PLANTS: [number, number, number][] = [
-  [-6.5, 0, 5.5],
-  [6.5, 0, 5.5],
-  [6.6, 0, -6.4],
+  [-8.6, 0, 6.8],
+  [8.6, 0, 6.8],
+  [-8.9, 0, 1.8],
 ]
 
 // A row of paperbacks leaning on the shelf's middle plank (x offset, height, spine).
@@ -30,9 +30,9 @@ const RGB = [HEX.magenta, HEX.cyan, 0x6fe27a]
 /**
  * Lived-in lounge decor that fills the open floor + ceiling around the central
  * sofa without crowding the gamers: corner plants, a small trophy shelf in the
- * back corner, a glass-panel PC tower, two warm pendant lamps over the coffee
- * table, and a floor beanbag beside the sofa. All static primitives — the glow
- * is just emissive material, the bloom pass does the rest.
+ * back corner, a glass-panel PC tower, and two warm pendant lamps over the
+ * coffee table. All static primitives — the glow is just emissive material, the
+ * bloom pass does the rest.
  */
 export function Decor() {
   return (
@@ -62,7 +62,7 @@ export function Decor() {
       ))}
 
       {/* ---- trophy / book shelf in the back-left corner ---- */}
-      <group position={[-6.9, 0, -6.5]}>
+      <group position={[-8.8, 0, -7.2]}>
         {/* open frame: two side panels + bottom, middle and top planks */}
         {[-0.53, 0.53].map((sx) => (
           <mesh key={sx} castShadow receiveShadow position={[sx, 1.0, 0]}>
@@ -102,7 +102,7 @@ export function Decor() {
       </group>
 
       {/* ---- gaming PC tower on the floor in the back-right corner ---- */}
-      <group position={[7.45, 0, -6.4]}>
+      <group position={[8.8, 0, -7.2]}>
         <mesh castShadow receiveShadow position={[0, 0.5, 0]}>
           <boxGeometry args={[0.46, 1.0, 0.5]} />
           <meshStandardMaterial color={HEX.plasticDark} metalness={0.4} roughness={0.45} />
@@ -129,36 +129,26 @@ export function Decor() {
       </group>
 
       {/* ---- two pendant lamps hanging over the coffee table ---- */}
-      {[-0.9, 0.9].map((lx) => (
-        <group key={lx}>
-          {/* thin drop rod from the ceiling */}
-          <mesh position={[lx, 3.6, 2.0]}>
-            <cylinderGeometry args={[0.012, 0.012, 1.2, 6]} />
-            <meshStandardMaterial color={HEX.metal} metalness={0.7} roughness={0.4} />
-          </mesh>
-          {/* conical shade */}
-          <mesh position={[lx, 2.98, 2.0]}>
-            <coneGeometry args={[0.17, 0.2, 16]} />
-            <meshStandardMaterial color={HEX.plasticDark} metalness={0.3} roughness={0.5} />
-          </mesh>
-          {/* warm bulb peeking out below (blooms) */}
-          <mesh position={[lx, 2.9, 2.0]}>
-            <sphereGeometry args={[0.07, 12, 10]} />
-            <meshStandardMaterial color={BULB} emissive={BULB} emissiveIntensity={2.0} toneMapped={false} />
-          </mesh>
-        </group>
-      ))}
-
-      {/* ---- floor beanbag beside the sofa ---- */}
-      <group position={[-2.4, 0, 4.4]}>
-        <mesh castShadow receiveShadow position={[0, 0.31, 0]} scale={[1, 0.62, 1]}>
-          <sphereGeometry args={[0.5, 16, 12]} />
-          <meshStandardMaterial color={CUSHION} roughness={0.9} />
-        </mesh>
-        <mesh castShadow position={[0, 0.5, 0]} scale={[1, 0.7, 1]}>
-          <sphereGeometry args={[0.34, 14, 10]} />
-          <meshStandardMaterial color="#3b3445" roughness={0.9} />
-        </mesh>
+      <group position={[LOUNGE.table.pos[0], 0, LOUNGE.table.pos[1]]}>
+        {[-0.85, 0.85].map((lx) => (
+          <group key={lx}>
+            {/* thin drop rod from the ceiling */}
+            <mesh position={[lx, 3.6, 0]}>
+              <cylinderGeometry args={[0.012, 0.012, 1.2, 6]} />
+              <meshStandardMaterial color={HEX.metal} metalness={0.7} roughness={0.4} />
+            </mesh>
+            {/* conical shade */}
+            <mesh position={[lx, 2.98, 0]}>
+              <coneGeometry args={[0.17, 0.2, 16]} />
+              <meshStandardMaterial color={HEX.plasticDark} metalness={0.3} roughness={0.5} />
+            </mesh>
+            {/* warm bulb peeking out below (blooms) */}
+            <mesh position={[lx, 2.9, 0]}>
+              <sphereGeometry args={[0.07, 12, 10]} />
+              <meshStandardMaterial color={BULB} emissive={BULB} emissiveIntensity={2.0} toneMapped={false} />
+            </mesh>
+          </group>
+        ))}
       </group>
     </group>
   )

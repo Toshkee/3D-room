@@ -22,11 +22,11 @@ const SIGN = '#7fd8ff'
 export function WallDressing() {
   return (
     <group>
-      {/* ---- back wall (face z = -6.95, looking +Z) ---- */}
-      <group position={[0, 0, -6.95]}>
+      {/* ---- back wall (just in front of the wall plane, looking +Z) ---- */}
+      <group position={[0, 0, -7.95]}>
         {/* framed art flanking the big TV */}
-        <FramedArt position={[-5.2, 2.8, 0.03]} width={1.0} height={1.2} art={POSTER_BACK_A} />
-        <FramedArt position={[5.2, 2.8, 0.03]} width={1.0} height={1.2} art={POSTER_BACK_B} />
+        <FramedArt position={[-6.4, 2.8, 0.03]} width={1.0} height={1.2} art={POSTER_BACK_A} />
+        <FramedArt position={[6.4, 2.8, 0.03]} width={1.0} height={1.2} art={POSTER_BACK_B} />
 
         {/* tiny neon sign tucked in the gap right of the TV */}
         <Text position={[3.4, 3.2, 0.05]} fontSize={0.3} anchorX="center" anchorY="middle" letterSpacing={0.05}>
@@ -65,8 +65,8 @@ export function WallDressing() {
       </group>
 
       {/* ---- side walls (foam + one poster each), flush + facing inward ---- */}
-      <SideWall position={[-7.95, 0, 0]} rotation={[0, Math.PI / 2, 0]} />
-      <SideWall position={[7.95, 0, 0]} rotation={[0, -Math.PI / 2, 0]} />
+      <SideWall position={[-9.45, 0, 0]} rotation={[0, Math.PI / 2, 0]} />
+      <SideWall position={[9.45, 0, 0]} rotation={[0, -Math.PI / 2, 0]} />
     </group>
   )
 }

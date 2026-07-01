@@ -36,15 +36,15 @@ export function Room() {
       <Wall position={[-HALF_W, ROOM.H / 2, 0]} rotation={[0, PI / 2, 0]} width={ROOM.D} />
       <Wall position={[HALF_W, ROOM.H / 2, 0]} rotation={[0, -PI / 2, 0]} width={ROOM.D} />
 
-      {/* big wall screen on the back wall, up high */}
-      <group position={[0, 2.95, -HALF_D + 0.06]}>
+      {/* the big wall screen — the lounge's focal point — centered up high */}
+      <group position={[0, 2.85, -HALF_D + 0.06]}>
         <mesh>
-          <boxGeometry args={[3.6, 1.7, 0.08]} />
+          <boxGeometry args={[4.8, 2.4, 0.09]} />
           <meshStandardMaterial color={HEX.plasticDark} roughness={0.5} />
         </mesh>
-        <mesh position={[0, 0, 0.05]}>
-          <planeGeometry args={[3.4, 1.5]} />
-          <meshStandardMaterial color="#1a2b4d" emissive="#22407a" emissiveIntensity={0.8} toneMapped={false} roughness={0.3} />
+        <mesh position={[0, 0, 0.06]}>
+          <planeGeometry args={[4.6, 2.2]} />
+          <meshStandardMaterial color="#1a2b4d" emissive="#2a4f96" emissiveIntensity={1.15} toneMapped={false} roughness={0.3} />
         </mesh>
       </group>
     </group>

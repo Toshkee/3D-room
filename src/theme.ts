@@ -39,8 +39,8 @@ export const HEX = {
 
 /** Interior dimensions, in meters. Floor sits at y = 0. */
 export const ROOM = {
-  W: 16, // x extent → interior x ∈ [-8, 8]
-  D: 14, // z extent → interior z ∈ [-7, 7]; the +z (front) side is open for the camera
+  W: 19, // x extent → interior x ∈ [-9.5, 9.5]
+  D: 16, // z extent → interior z ∈ [-8, 8]; the +z (front) side is open for the camera
   H: 4.2, // wall height
 } as const
 export const HALF_W = ROOM.W / 2
@@ -48,7 +48,8 @@ export const HALF_D = ROOM.D / 2
 
 /** Vendored CC0 assets (paths respect Vite's base so sub-path hosting works). */
 const BASE = import.meta.env.BASE_URL
-/** RobotExpressive — rigged, CC0, has a "Sitting" clip; reused per station. */
-export const MODEL_URL = `${BASE}models/RobotExpressive.glb`
+/** Soldier ("Vanguard") — rigged humanoid with Idle/Walk/Run clips; the gamers
+ *  are clones of this, tinted per project accent, that walk in and settle. */
+export const HUMAN_URL = `${BASE}models/Soldier.glb`
 /** Interior HDRI for image-based lighting + reflections. */
 export const HDRI_URL = `${BASE}hdri/lebombo.hdr`

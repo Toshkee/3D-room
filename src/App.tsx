@@ -36,7 +36,7 @@ export default function App() {
           powerPreference: 'high-performance',
           alpha: false,
         }}
-        camera={{ position: [0, 7.4, 16], fov: 34, near: 0.1, far: 100 }}
+        camera={{ position: [0, 7.8, 18], fov: 34, near: 0.1, far: 100 }}
         onCreated={({ gl }) => {
           gl.toneMapping = THREE.ACESFilmicToneMapping
           gl.toneMappingExposure = 1.1

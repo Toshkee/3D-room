@@ -50,7 +50,12 @@ export function Lighting() {
       ))}
 
       {/* cool fill from the camera side so faces aren't lost in shadow */}
-      <pointLight position={[0, 3.2, 7.5]} intensity={5} distance={16} decay={2} color="#9fb8ff" />
+      <pointLight position={[0, 3.4, 8.6]} intensity={5} distance={18} decay={2} color="#9fb8ff" />
+
+      {/* a warm fill over the lounge nook so the loungers + sofa read */}
+      <pointLight position={[0, 3.3, 4.6]} intensity={5.5} distance={12} decay={2} color="#ffe2c2" />
+      {/* a soft front fill aimed at the sofa so the loungers' faces aren't black */}
+      <pointLight position={[0, 2.2, 7.2]} intensity={3} distance={9} decay={2} color="#ffeede" />
     </>
   )
 }
