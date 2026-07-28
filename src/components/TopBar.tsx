@@ -1,7 +1,7 @@
 import { useLounge } from '../state/LoungeContext'
 import type { View } from '../types'
 import { RobotFace } from './RobotFace'
-import { Gamepad2, LayoutGrid, MessagesSquare, Moon, Sun, Plus } from './icons'
+import { Gamepad2, LayoutGrid, MessagesSquare, Moon, Sun, Plus, RotateCcw } from './icons'
 
 const TABS: { id: View; label: string; Icon: typeof Gamepad2 }[] = [
   { id: 'lounge', label: 'Lounge', Icon: Gamepad2 },
@@ -10,7 +10,7 @@ const TABS: { id: View; label: string; Icon: typeof Gamepad2 }[] = [
 ]
 
 export function TopBar({ onImport }: { onImport: () => void }) {
-  const { view, setView, theme, toggleTheme, bots } = useLounge()
+  const { view, setView, theme, toggleTheme, bots, engineKind, resetLounge } = useLounge()
   return (
     <header className="topbar">
       <div className="brand">
@@ -19,7 +19,9 @@ export function TopBar({ onImport }: { onImport: () => void }) {
         </span>
         <span className="brand__text">
           <span className="brand__name">AI Lounge</span>
-          <span className="brand__sub">{bots.length} bots online</span>
+          <span className="brand__sub">
+            {bots.length} bots online · {engineKind === 'claude' ? 'live (Claude)' : 'simulated'}
+          </span>
         </span>
       </div>
 
@@ -38,6 +40,18 @@ export function TopBar({ onImport }: { onImport: () => void }) {
       </nav>
 
       <div className="topbar__actions">
+        <button
+          className="icon-btn icon-btn--ghost"
+          onClick={() => {
+            if (confirm('Reset the lounge? This clears saved bots, chats, and artifacts.')) {
+              resetLounge()
+            }
+          }}
+          aria-label="Reset the lounge (clears saved state)"
+          title="Reset lounge"
+        >
+          <RotateCcw size={17} />
+        </button>
         <button
           className="icon-btn icon-btn--ghost"
           onClick={toggleTheme}

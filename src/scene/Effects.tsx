@@ -1,20 +1,24 @@
-import { EffectComposer, N8AO, Bloom, Vignette } from '@react-three/postprocessing'
+import { EffectComposer, N8AO, Bloom, Vignette, SMAA } from '@react-three/postprocessing'
 
 // Post pipeline (order matters): ambient occlusion grounds everything first,
 // then restrained bloom makes only the bright emissive sources (neon cove,
 // arcade screens, monitors, robot eyes, glow decals) actually glow, then a
-// gentle vignette. No bloom threshold change to the matte pastels — they stay flat.
+// gentle vignette, then SMAA for edges.
+//
+// Perf notes: AO runs half-res at "performance" quality (visually near-identical
+// on this flat-shaded scene, several ms cheaper). The composer runs without
+// MSAA (multisampling multiplies the whole frame cost) — SMAA at the end is the
+// cheap replacement for edge quality.
 export function Effects({ dark }: { dark: boolean }) {
   return (
-    <EffectComposer multisampling={4}>
-      {/* Soft, tinted ambient occlusion — nestles objects into the room and
-          darkens seams/corners. Half-res + medium quality keeps it cheap. */}
+    <EffectComposer multisampling={0}>
       <N8AO
         aoRadius={0.9}
         distanceFalloff={1.0}
         intensity={dark ? 1.7 : 2.1}
         color={dark ? '#04030f' : '#241a3a'}
-        quality="high"
+        quality="performance"
+        halfRes
       />
       <Bloom
         intensity={dark ? 0.95 : 0.62}
@@ -24,6 +28,7 @@ export function Effects({ dark }: { dark: boolean }) {
         radius={0.72}
       />
       <Vignette offset={0.3} darkness={dark ? 0.55 : 0.32} />
+      <SMAA />
     </EffectComposer>
   )
 }

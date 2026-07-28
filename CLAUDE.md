@@ -43,18 +43,39 @@ each **bot** also has its own accent used for its avatar/monitor/chat bubble.
   the true isometric view; furniture is flat-shaded low-poly geometry.
 - **@react-three/drei** — `Html` (screen-space billboard bot badges),
   `RoundedBox` (soft furniture), `ContactShadows` (soft grounding).
-- No postprocessing, no backend, no database. **localStorage is used only for
-  the theme preference** — nothing else is persisted (the simulation is
-  in-memory and resets on reload).
+- No database. **localStorage persists the theme** (`ai-lounge-theme`) **and the
+  lounge state** (`ai-lounge-state-v1`: bots, chats, group, activity, artifacts
+  — debounced save in `LoungeContext`, hydrate on boot, "Reset lounge" button in
+  the TopBar clears it). The Claude engine is re-seeded from saved chats so bots
+  remember across reloads.
 
 ## The bot engine (the important seam)
 
 All bot behavior flows through **`src/engine/BotEngine.ts`** — an interface the
-UI talks to. Today it's the **`SimulatedBotEngine`** (timers + scripted,
-role-flavored content in `engine/content.ts`). To make bots real later, implement
-the same `BotEngine` interface with a **Claude-backed** engine and swap it in
-`state/LoungeContext.tsx` — **the UI and state shape don't change.** The engine
-never touches React; it pushes updates through `EngineHandlers`
+UI talks to. There are two implementations:
+
+- **`SimulatedBotEngine`** — timers + scripted, role-flavored content in
+  `engine/content.ts`. Always available; the fallback.
+- **`ClaudeBotEngine`** — real Claude conversations (1:1 chat, group chat,
+  autonomous group chatter), Claude-generated activity-feed lines (batched, one
+  call per ~12 lines per bot per task), and **assigned work** (`assignTask` →
+  real deliverable → `onArtifact` → artifacts drawer in the BotPanel), all via
+  the local proxy in **`server/index.mjs`**. Replies **stream**: the engine
+  re-emits the same message id as text grows and the provider upserts by id
+  (`onChat`/`onGroup` are upserts, not appends). Only task progress % stays
+  timer-driven. The frontend only calls `/api/*` (Vite dev-proxies it to
+  `localhost:8787`).
+
+`LoungeContext` starts the simulation, probes `GET /api/health` on mount, and
+hot-swaps in `ClaudeBotEngine` if the proxy is up — the TopBar shows
+"live (Claude)" vs "simulated". The proxy picks its backend at startup:
+with `ANTHROPIC_API_KEY` set it uses the Anthropic SDK (`CLAUDE_MODEL`
+overrides the model, default `claude-opus-5`); **without a key it shells out to
+headless `claude -p` (Claude Code print mode), riding the user's Claude Code
+subscription — no API credits needed** (capped at 2 concurrent CLI runs).
+To run live: `npm run server` in one terminal, `npm run dev` in another.
+
+The engine never touches React; it pushes updates through `EngineHandlers`
 (`onActivity` / `onStatus` / `onChat` / `onGroup`), and the provider applies them
 to state. `getBots()` keeps the engine reading the live roster (incl. imports).
 
@@ -62,6 +83,7 @@ to state. `getBots()` keeps the engine reading the live roster (incl. imports).
 
 - `npm install` — install dependencies
 - `npm run dev` — dev server at http://localhost:5173
+- `npm run server` — Claude proxy at http://localhost:8787 (needs `ANTHROPIC_API_KEY`)
 - `npm run build` — type-check (`tsc -b`) + production build to `dist/`
 - `npm run typecheck` — type-check only
 

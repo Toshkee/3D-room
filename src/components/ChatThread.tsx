@@ -28,10 +28,12 @@ export function ChatThread({
   const listRef = useRef<HTMLDivElement>(null)
   const byId = useMemo(() => new Map(bots.map((b) => [b.id, b])), [bots])
 
+  // Follow both new messages and streamed growth of the newest one.
+  const lastLen = messages.length ? messages[messages.length - 1].text.length : 0
   useEffect(() => {
     const el = listRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [messages.length])
+  }, [messages.length, lastLen])
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()

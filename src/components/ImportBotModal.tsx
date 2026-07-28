@@ -15,12 +15,20 @@ export function ImportBotModal({ onClose }: { onClose: () => void }) {
   const [blurb, setBlurb] = useState('')
   const nameRef = useRef<HTMLInputElement>(null)
 
+  // Focus the first field once, on open only. `onClose` is a fresh closure on
+  // every parent render, so keying this effect to it would re-focus the name
+  // field mid-typing every time the lounge state ticked.
   useEffect(() => {
     nameRef.current?.focus()
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+  }, [])
+
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && closeRef.current()
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [])
 
   const chooseRole = (r: Role) => {
     setRole(r)

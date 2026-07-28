@@ -29,4 +29,8 @@ export {
   LayoutGrid,
   MessagesSquare,
   Sparkles,
+  Copy,
+  Check,
+  Package,
+  RotateCcw,
 } from 'lucide-react'

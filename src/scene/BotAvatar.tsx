@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { Html, RoundedBox } from '@react-three/drei'
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import * as THREE from 'three'
@@ -25,7 +25,9 @@ function shortAngle(a: number) {
 // because every edge is a clear segment. Comes to attention (stops + faces you)
 // when selected. Writes its live position + node claims into shared refs so
 // bots don't target the same spot and the camera can follow the selected one.
-export function BotAvatar({
+// Memoized so a status/progress tick on one bot doesn't re-render every other
+// bot's badge (each one is a drei <Html> portal — cheap alone, not in bulk).
+export const BotAvatar = memo(function BotAvatar({
   bot,
   selected,
   onSelect,
@@ -312,4 +314,4 @@ export function BotAvatar({
       </Html>
     </group>
   )
-}
+})

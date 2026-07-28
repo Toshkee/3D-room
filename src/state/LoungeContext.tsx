@@ -8,19 +8,55 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import type { ActivityLine, Bot, Message, Role, Theme, View } from '../types'
+import type { ActivityLine, Artifact, Bot, Message, Role, Theme, View } from '../types'
 import { CREW, SEATS, firstOpenSeat } from '../data/bots'
 import { ROLE_META } from '../theme'
 import { SimulatedBotEngine } from '../engine/SimulatedBotEngine'
+import { ClaudeBotEngine } from '../engine/ClaudeBotEngine'
 import { ACTIVITY, TASKS, pick } from '../engine/content'
-import type { BotEngine } from '../engine/BotEngine'
+import type { BotEngine, EngineHandlers } from '../engine/BotEngine'
 import { usePrefersReducedMotion } from '../usePrefersReducedMotion'
 
 const ACTIVITY_CAP = 40
 const GROUP_CAP = 60
+const ARTIFACT_CAP = 20
+const STORAGE_KEY = 'ai-lounge-state-v1'
 
 let seq = 0
-const uid = (p: string) => `${p}-${++seq}`
+const uid = (p: string) => `${p}-${Date.now().toString(36)}-${++seq}`
+
+// --- persistence -------------------------------------------------------------
+
+interface SavedState {
+  bots: Bot[]
+  activity: Record<string, ActivityLine[]>
+  chats: Record<string, Message[]>
+  group: Message[]
+  artifacts: Record<string, Artifact[]>
+}
+
+function loadSaved(): SavedState | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return null
+    const s = JSON.parse(raw) as SavedState
+    if (!Array.isArray(s.bots) || !s.bots.length) return null
+    return s
+  } catch {
+    return null
+  }
+}
+
+const SAVED = typeof localStorage !== 'undefined' ? loadSaved() : null
+
+/** Append, or replace in place when a message with the same id exists (streaming). */
+function upsert(list: Message[], message: Message): Message[] {
+  const i = list.findIndex((m) => m.id === message.id)
+  if (i < 0) return [...list, message]
+  const next = list.slice()
+  next[i] = message
+  return next
+}
 
 export interface NewBot {
   name: string
@@ -35,16 +71,21 @@ interface LoungeState {
   view: View
   selectedId: string | null
   reducedMotion: boolean
+  /** Which engine is driving the bots: the local sim, or live Claude via the proxy. */
+  engineKind: 'simulated' | 'claude'
   activity: Record<string, ActivityLine[]>
   chats: Record<string, Message[]>
   group: Message[]
+  artifacts: Record<string, Artifact[]>
   // actions
   setView(v: View): void
   toggleTheme(): void
   selectBot(id: string | null): void
   sendChat(botId: string, text: string): void
   sendGroup(text: string): void
+  assignTask(botId: string, brief: string): void
   addBot(input: NewBot): Bot
+  resetLounge(): void
 }
 
 const Ctx = createContext<LoungeState | null>(null)
@@ -82,14 +123,17 @@ function seedGroup(bots: Bot[]): Message[] {
 export function LoungeProvider({ children }: { children: ReactNode }) {
   const reducedMotion = usePrefersReducedMotion()
 
-  const [bots, setBots] = useState<Bot[]>(CREW)
+  const [bots, setBots] = useState<Bot[]>(() => SAVED?.bots ?? CREW)
   const [view, setView] = useState<View>('lounge')
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [activity, setActivity] = useState<Record<string, ActivityLine[]>>(() =>
-    seedActivity(CREW),
+  const [activity, setActivity] = useState<Record<string, ActivityLine[]>>(
+    () => SAVED?.activity ?? seedActivity(CREW),
   )
-  const [chats, setChats] = useState<Record<string, Message[]>>({})
-  const [group, setGroup] = useState<Message[]>(() => seedGroup(CREW))
+  const [chats, setChats] = useState<Record<string, Message[]>>(() => SAVED?.chats ?? {})
+  const [group, setGroup] = useState<Message[]>(() => SAVED?.group ?? seedGroup(CREW))
+  const [artifacts, setArtifacts] = useState<Record<string, Artifact[]>>(
+    () => SAVED?.artifacts ?? {},
+  )
   const [theme, setTheme] = useState<Theme>(() => {
     const saved =
       typeof localStorage !== 'undefined' && localStorage.getItem('ai-lounge-theme')
@@ -108,14 +152,34 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
     }
   }, [theme])
 
-  // Keep a live ref of bots so the engine always reads the current roster.
+  // Keep live refs so the engine always reads current state (roster, and the
+  // conversation histories used to seed the Claude engine on hot-swap).
   const botsRef = useRef(bots)
   botsRef.current = bots
+  const chatsRef = useRef(chats)
+  chatsRef.current = chats
+  const groupRef = useRef(group)
+  groupRef.current = group
+
+  // Persist everything the room accumulates (debounced; theme is stored
+  // separately under its own key).
+  useEffect(() => {
+    const id = setTimeout(() => {
+      try {
+        const state: SavedState = { bots, activity, chats, group, artifacts }
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+      } catch {
+        /* storage full/blocked — persistence is best-effort */
+      }
+    }, 400)
+    return () => clearTimeout(id)
+  }, [bots, activity, chats, group, artifacts])
 
   // --- engine wiring (created once) -----------------------------------------
-  const engineRef = useRef<BotEngine | null>(null)
-  if (!engineRef.current) {
-    engineRef.current = new SimulatedBotEngine(() => botsRef.current, {
+  const [engineKind, setEngineKind] = useState<'simulated' | 'claude'>('simulated')
+  const handlersRef = useRef<EngineHandlers | null>(null)
+  if (!handlersRef.current) {
+    handlersRef.current = {
       onActivity: (line) =>
         setActivity((prev) => {
           const list = [...(prev[line.botId] ?? []), line].slice(-ACTIVITY_CAP)
@@ -124,15 +188,45 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
       onStatus: (botId, patch) =>
         setBots((prev) => prev.map((b) => (b.id === botId ? { ...b, ...patch } : b))),
       onChat: (botId, message) =>
-        setChats((prev) => ({ ...prev, [botId]: [...(prev[botId] ?? []), message] })),
-      onGroup: (message) => setGroup((prev) => [...prev, message].slice(-GROUP_CAP)),
-    })
+        setChats((prev) => ({ ...prev, [botId]: upsert(prev[botId] ?? [], message) })),
+      onGroup: (message) => setGroup((prev) => upsert(prev, message).slice(-GROUP_CAP)),
+      onArtifact: (artifact) =>
+        setArtifacts((prev) => ({
+          ...prev,
+          [artifact.botId]: [...(prev[artifact.botId] ?? []), artifact].slice(-ARTIFACT_CAP),
+        })),
+    }
+  }
+  const engineRef = useRef<BotEngine | null>(null)
+  if (!engineRef.current) {
+    engineRef.current = new SimulatedBotEngine(() => botsRef.current, handlersRef.current)
   }
 
   useEffect(() => {
-    const engine = engineRef.current!
-    engine.start()
-    return () => engine.stop()
+    let cancelled = false
+    engineRef.current!.start()
+    // Probe the local Claude proxy; if it's up, hot-swap in the real engine.
+    // Without a proxy the room keeps running on the simulation.
+    ;(async () => {
+      try {
+        const res = await fetch('/api/health')
+        if (!res.ok) return
+        const info = (await res.json()) as { ok?: boolean }
+        if (cancelled || !info.ok) return
+        engineRef.current!.stop()
+        const claude = new ClaudeBotEngine(() => botsRef.current, handlersRef.current!)
+        claude.seed(chatsRef.current, groupRef.current) // bots remember past sessions
+        engineRef.current = claude
+        engineRef.current.start()
+        setEngineKind('claude')
+      } catch {
+        /* proxy not running — stay on the simulation */
+      }
+    })()
+    return () => {
+      cancelled = true
+      engineRef.current!.stop()
+    }
   }, [])
 
   // --- actions --------------------------------------------------------------
@@ -157,6 +251,21 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
     const msg: Message = { id: uid('u'), from: 'user', text: trimmed, at: Date.now() }
     setGroup((prev) => [...prev, msg].slice(-GROUP_CAP))
     engineRef.current!.sendGroup(trimmed)
+  }, [])
+
+  const assignTask = useCallback((botId: string, brief: string) => {
+    const trimmed = brief.trim()
+    if (!trimmed) return
+    engineRef.current!.assignTask(botId, trimmed)
+  }, [])
+
+  const resetLounge = useCallback(() => {
+    try {
+      localStorage.removeItem(STORAGE_KEY)
+    } catch {
+      /* ignore */
+    }
+    location.reload()
   }, [])
 
   const addBot = useCallback((input: NewBot): Bot => {
@@ -197,15 +306,19 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
       view,
       selectedId,
       reducedMotion,
+      engineKind,
       activity,
       chats,
       group,
+      artifacts,
       setView,
       toggleTheme,
       selectBot,
       sendChat,
       sendGroup,
+      assignTask,
       addBot,
+      resetLounge,
     }),
     [
       bots,
@@ -213,14 +326,18 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
       view,
       selectedId,
       reducedMotion,
+      engineKind,
       activity,
       chats,
       group,
+      artifacts,
       toggleTheme,
       selectBot,
       sendChat,
       sendGroup,
+      assignTask,
       addBot,
+      resetLounge,
     ],
   )
 

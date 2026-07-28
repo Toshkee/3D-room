@@ -54,5 +54,16 @@ export interface Message {
   streaming?: boolean
 }
 
+/** A deliverable a bot produced from an assigned brief. */
+export interface Artifact {
+  id: string
+  botId: string
+  /** The brief that was assigned (doubles as the title). */
+  title: string
+  /** The produced content (plain text / light markdown). */
+  content: string
+  at: number
+}
+
 export type View = 'lounge' | 'dashboard' | 'group'
 export type Theme = 'light' | 'dark'

@@ -131,6 +131,24 @@ export class SimulatedBotEngine implements BotEngine {
     })
   }
 
+  assignTask(botId: string, brief: string) {
+    const bot = this.getBots().find((b) => b.id === botId)
+    if (!bot) return
+    const shortTask = brief.length > 64 ? `${brief.slice(0, 61)}…` : brief
+    this.h.onStatus(botId, { status: 'working', task: shortTask, progress: 10 })
+    this.after(2600 + Math.random() * 2000, () => {
+      this.h.onArtifact({
+        id: uid('art'),
+        botId,
+        title: brief,
+        content:
+          '(simulated) This is where the real deliverable would go — start the Claude proxy (`npm run server`) and reassign to get actual output.',
+        at: Date.now(),
+      })
+      this.h.onStatus(botId, { status: 'done', progress: 100 })
+    })
+  }
+
   sendGroup(text: string) {
     const bots = this.getBots()
     if (!bots.length) return
