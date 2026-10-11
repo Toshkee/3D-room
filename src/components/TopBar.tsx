@@ -1,7 +1,7 @@
 import { useLounge } from '../state/LoungeContext'
 import type { View } from '../types'
 import { RobotFace } from './RobotFace'
-import { Gamepad2, LayoutGrid, MessagesSquare, Moon, Sun, Plus, RotateCcw } from './icons'
+import { Gamepad2, LayoutGrid, MessagesSquare, Moon, Sun, Plus, RotateCcw, Volume2, VolumeX } from './icons'
 
 const TABS: { id: View; label: string; Icon: typeof Gamepad2 }[] = [
   { id: 'lounge', label: 'Lounge', Icon: Gamepad2 },
@@ -10,7 +10,7 @@ const TABS: { id: View; label: string; Icon: typeof Gamepad2 }[] = [
 ]
 
 export function TopBar({ onImport }: { onImport: () => void }) {
-  const { view, setView, theme, toggleTheme, bots, engineKind, resetLounge } = useLounge()
+  const { view, setView, theme, toggleTheme, sound, toggleSound, bots, engineKind, resetLounge } = useLounge()
   return (
     <header className="topbar">
       <div className="brand">
@@ -51,6 +51,16 @@ export function TopBar({ onImport }: { onImport: () => void }) {
           title="Reset lounge"
         >
           <RotateCcw size={17} />
+        </button>
+        <button
+          className="icon-btn icon-btn--ghost"
+          onClick={toggleSound}
+          aria-pressed={sound}
+          aria-label={sound ? 'Turn ambient sound off' : 'Turn ambient sound on'}
+          title={sound ? 'Sound on' : 'Sound off'}
+          data-on={sound || undefined}
+        >
+          {sound ? <Volume2 size={18} /> : <VolumeX size={18} />}
         </button>
         <button
           className="icon-btn icon-btn--ghost"

@@ -5,9 +5,10 @@ Guidance for Claude Code when working in this repo.
 ## What this is
 
 **AI Lounge** — a cozy, stylized **isometric room** where a user's **AI bots**
-hang out, work, and talk. Each bot is a flat circular portrait floating in the
-room (always facing the camera) above a spot of furniture, with a live **status
-pill** ("Working…", "Thinking…") that pulses while it's active.
+hang out, work, and talk. Each bot is a cute low-poly **robot** that roams the
+room, with a floating name tag + live **status pill** ("Working…", "Thinking…")
+and a **speech bubble** showing what it just said. Where a robot goes and how
+its body moves follows its status (see *The living room* below).
 
 Core surfaces:
 
@@ -41,9 +42,12 @@ each **bot** also has its own accent used for its avatar/monitor/chat bubble.
   `noUnusedLocals`/`noUnusedParameters`.
 - **three** via **@react-three/fiber** (R3F) — an **orthographic** camera makes
   the true isometric view; furniture is flat-shaded low-poly geometry.
-- **@react-three/drei** — `Html` (screen-space billboard bot badges),
-  `RoundedBox` (soft furniture), `ContactShadows` (soft grounding).
-- No database. **localStorage persists the theme** (`ai-lounge-theme`) **and the
+- **@react-three/drei** — `Html` (screen-space bot name tags + speech
+  bubbles), `RoundedBox` (soft furniture), `OrbitControls`, `Sparkles`, `Grid`.
+- **@react-three/postprocessing** — N8AO + restrained Bloom + Vignette + SMAA
+  (`scene/Effects.tsx`); emissive screens/neon cross the bloom threshold.
+- No database. **localStorage persists the theme** (`ai-lounge-theme`), the
+  **sound toggle** (`ai-lounge-sound`, off by default) **and the
   lounge state** (`ai-lounge-state-v1`: bots, chats, group, activity, artifacts
   — debounced save in `LoungeContext`, hydrate on boot, "Reset lounge" button in
   the TopBar clears it). The Claude engine is re-seeded from saved chats so bots
@@ -70,20 +74,57 @@ UI talks to. There are two implementations:
 hot-swaps in `ClaudeBotEngine` if the proxy is up — the TopBar shows
 "live (Claude)" vs "simulated". The proxy picks its backend at startup:
 with `ANTHROPIC_API_KEY` set it uses the Anthropic SDK (`CLAUDE_MODEL`
-overrides the model, default `claude-opus-5`); **without a key it shells out to
+overrides the model, default haiku — see `server/index.mjs`); **without a key it shells out to
 headless `claude -p` (Claude Code print mode), riding the user's Claude Code
 subscription — no API credits needed** (capped at 2 concurrent CLI runs).
 To run live: `npm run server` in one terminal, `npm run dev` in another.
 
 The engine never touches React; it pushes updates through `EngineHandlers`
-(`onActivity` / `onStatus` / `onChat` / `onGroup`), and the provider applies them
-to state. `getBots()` keeps the engine reading the live roster (incl. imports).
+(`onActivity` / `onStatus` / `onChat` / `onGroup` / `onArtifact`), and the
+provider applies them to state. `getBots()` keeps the engine reading the live
+roster (incl. imports).
+
+## The living room (scene behavior)
+
+The 3D room reacts to the engine through **scene cues** — `state/sceneBus.ts`,
+a tiny pub/sub outside React (not app state, never persisted). `LoungeContext`
+emits them from the engine handlers: `say` (a bot's chat/group text → its speech
+bubble, re-emitted as a reply streams), `typing` (reply being composed → typing
+dots), `celebrate` (status → done), `converse` (bot A addressed bot B in the team
+channel, by @mention or by replying within 25s). It also marks imported bots as
+`entering` (they walk in through the door) and tracks who is typing at a desk
+(`setKeys`, for keyboard sounds). Consumers: `BotAvatar` (bubble via
+`useSpeech`), `scene/Conductor.tsx` (turns `converse` into one bot walking over
+to the other), and `audio/loungeAudio.ts`.
+
+- **Status drives behavior** (`data/roam.ts` → `chooseGoal`/`suits`/`dwellFor`):
+  *working* → sits at a desk and types (the desk's monitor + lamp take the bot's
+  accent via `world.using`), or works on a laptop on the sofa when desks are
+  taken; *thinking* → paces slowly with a hand on its chin, browses the
+  bookshelf, scribbles on the whiteboard; *idle* → arcades (whose screens show a
+  score), pool table, sofa/armchair/beanbag, vending machine (leaves sipping a
+  can); *done* → hop + confetti burst. Selecting a bot makes it stop and wave.
+- **Shared scene state** is `scene/world.ts` (`World`): positions (also read by
+  the camera), node claims, agents (status, conversation, visits), furniture in
+  use, door state. Created once per canvas, mutated in `useFrame` — never React
+  state. `BotAvatar` keeps its FSM + pose smoothing in refs.
+- **Walkway graph:** every edge in `roam.ts` is a hand-checked clear segment.
+  When you move furniture in `Room.tsx`/`Decor.tsx`, re-check the nearby edges.
+- **Ambience:** `scene/Decor.tsx` (window onto the real sky by local time +
+  sun/moon patch on the floor, wall clock, bookshelf, posters, rolling sprint
+  whiteboard with each bot's live task, warm flickering lamps, steaming mug, the
+  door), `scene/Roomba.tsx`, neon buzz + swaying plants in `Room.tsx`. Canvas
+  art (code on monitors, arcade games, sky, posters, whiteboard) is drawn in
+  `scene/canvasArt.ts` — no image assets. `?hour=17.5` overrides the clock.
+- **Sound** (`audio/loungeAudio.ts`): synthesized Web Audio — lo-fi chord bed,
+  keyboard clicks while bots type, a chime on done, a blip on speech. Off until
+  the user enables it in the TopBar.
 
 ## Commands
 
 - `npm install` — install dependencies
 - `npm run dev` — dev server at http://localhost:5173
-- `npm run server` — Claude proxy at http://localhost:8787 (needs `ANTHROPIC_API_KEY`)
+- `npm run server` — Claude proxy at http://localhost:8787 (API key if set, else `claude -p`)
 - `npm run build` — type-check (`tsc -b`) + production build to `dist/`
 - `npm run typecheck` — type-check only
 
@@ -92,7 +133,7 @@ to state. `getBots()` keeps the engine reading the live roster (incl. imports).
 - `index.html` — mount point + `<html data-theme="light">`
 - `public/favicon.svg`
 - `src/`
-  - `main.tsx` — React root
+  - `main.tsx` — React root (StrictMode — effects mount twice in dev)
   - `App.tsx` — `LoungeProvider` + shell: `TopBar`, the active view
     (Lounge/Dashboard/GroupChat), the `BotPanel` overlay, the `ImportBotModal`
   - `index.css` — **all** UI styling + theme tokens (`[data-theme]` + CSS vars)
@@ -102,21 +143,35 @@ to state. `getBots()` keeps the engine reading the live roster (incl. imports).
   - `util.ts` — `fmtTime`, `clamp`
   - `usePrefersReducedMotion.ts`
   - `data/bots.ts` — **`CREW`** (seed bots, one per role), **`SEATS`** (room
-    seat coords), `SEAT_Y`, `firstOpenSeat`
+    seat coords), `LABEL_Y`, `firstOpenSeat`
+  - `data/roam.ts` — the walkway graph (nodes per activity), status-driven goal
+    choice, dwell times, walk speeds
   - `engine/`
     - `BotEngine.ts` — the `BotEngine` interface + `EngineHandlers`
     - `SimulatedBotEngine.ts` — the timer-driven simulation
     - `content.ts` — all simulated content pools (tasks, activity lines, 1:1
       replies, group lines) + `pick`/`chance`/`keyword`
-  - `state/LoungeContext.tsx` — the single store: bots, theme, view, selection,
-    activity, chats, group; wires the engine; `useLounge()` hook
+  - `state/LoungeContext.tsx` — the single store: bots, theme, sound, view,
+    selection, activity, chats, group, artifacts; wires the engine; emits scene
+    cues; `useLounge()` hook
+  - `state/sceneBus.ts` — scene cues (speech, typing, celebrate, converse,
+    entering, desk typing) + `useSpeech`
+  - `audio/loungeAudio.ts` — the synthesized sound layer
   - `scene/`
-    - `Lounge3D.tsx` — `<Canvas orthographic>` + `CameraRig` (fit + pointer
-      parallax) + composition
-    - `Lighting.tsx` — flat hemisphere + gentle key lights (no shadow maps)
-    - `Room.tsx` — floor, walls, rug, sofa/armchair/beanbag/table, desks,
-      wall screen, frames, plants (all flat-shaded, theme-colored)
-    - `BotAvatar.tsx` — a bot's floor ring + shadow disc + drei `Html` badge
+    - `Lounge3D.tsx` — `<Canvas orthographic>` + composition; owns the `World`
+    - `CameraRig.tsx` — intro crane, OrbitControls (azimuth clamped to the open
+      side of the room), follow-the-selected-bot, idle ping-pong orbit
+    - `Lighting.tsx` — hemisphere + key (one shadow caster, warms at golden
+      hour) + rim + front fill
+    - `Effects.tsx` — post pipeline (AO, bloom, vignette, SMAA)
+    - `Room.tsx` — floor, walls, rugs, sofa corner, desks (chair, lamp, code
+      monitor), arcades, wall screen, neon, vending, pool table, plants
+    - `Decor.tsx` — window/sky + sun patch, clock, bookshelf, posters,
+      whiteboard, lamps, mug, door
+    - `BotAvatar.tsx` — the robot: status-driven FSM, poses, props (laptop,
+      book, can, cue), confetti, name tag + `SpeechBubble`
+    - `SpeechBubble.tsx`, `Conductor.tsx`, `Roomba.tsx`, `world.ts`,
+      `canvasArt.ts`, `timeOfDay.ts`, `softShadow.tsx`
   - `components/` — `TopBar`, `Avatar`, `StatusPill`, `ProgressBar`, `TypeLine`
     (typewriter), `ActivityFeed`, `ChatThread` (shared by panel + group),
     `BotPanel`, `Dashboard`, `GroupChat`, `ImportBotModal`
@@ -133,25 +188,27 @@ to state. `getBots()` keeps the engine reading the live roster (incl. imports).
   scatter fake content into components.
 - **The scene is stylized, not photoreal.** Flat matte `meshStandardMaterial`
   (high roughness, no metalness), low-poly boxes/cylinders/spheres, `RoundedBox`
-  for soft furniture. Only monitors/screens/frames use emissive accent
-  (`toneMapped={false}`) — there's no bloom, so keep glows as bright surfaces.
-- **Bots are drei `<Html>` billboards**, not 3D meshes — screen-space (constant
-  size, which suits the orthographic camera), always facing the camera, and they
-  are **real `<button>`s** (so they're clickable *and* keyboard-focusable). Their
-  floor ring + shadow disc ARE meshes (animated in `useFrame`). Keep the badge a
-  button so the non-pointer path to every bot stays intact.
+  for soft furniture. Screens/neon/lamps use emissive color (`toneMapped={false}`)
+  and bloom picks up only those. Point lights are a fixed set (3 desk lamps +
+  2 lamps) — vary intensity, don't add/remove lights at runtime (shader
+  recompiles).
+- **Bots are low-poly robot meshes** with a drei `<Html>` name tag whose badge is
+  a **real `<button>`** (clickable *and* keyboard-focusable) — keep it a button
+  so the non-pointer path to every bot stays intact. The speech bubble sits in
+  the same `<Html>` and is `aria-hidden` (the text lives in the chat views).
 - **Theming:** driven by `[data-theme]` on `<html>` + CSS variables in
   `index.css`; the 3D room reads `ROOM[theme]` from `theme.ts`. Light is the
-  default. Persist only the theme (localStorage `ai-lounge-theme`).
-- **Camera:** fixed isometric orthographic, fit to the viewport in `CameraRig`,
-  with a subtle pointer parallax. No OrbitControls (it's an iso scene, not a
-  free-orbit one). Under reduced motion the canvas is `frameloop="demand"`, so
-  imperative camera changes must `invalidate()`.
+  default.
+- **Camera:** orthographic; OrbitControls for rotate/zoom (no pan), azimuth
+  clamped so walls never block the view. Under reduced motion the canvas is
+  `frameloop="demand"`, so imperative camera changes must `invalidate()`; bots
+  hold their spots and the intro/auto-orbit/sway/steam are off.
 - **Accessibility:** bot badges, dashboard cards, tabs are all buttons; the panel
   and modal close on Escape and manage focus; `prefers-reduced-motion` disables
   the typewriter, pulses, and parallax.
-- **Mobile:** the panel/modal go full-width under 860px; `touch-action: none` on
-  the canvas. Keep it usable on a phone.
+- **Mobile:** the panel/modal go full-width under 860px; the TopBar drops the
+  brand text under 620px and the logo under 440px so its buttons fit a 390px
+  phone; `touch-action: none` on the canvas. Keep it usable on a phone.
 
 ## Roadmap
 

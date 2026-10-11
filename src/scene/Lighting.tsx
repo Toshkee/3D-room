@@ -1,9 +1,14 @@
 import type { RoomPalette } from '../theme'
+import type { DayLight } from './timeOfDay'
+import { mixHex } from '../util'
 
 // Soft, flat lighting for the stylized room — a hemisphere fill for the matte
 // look, one gentle key light for shape, plus a front fill so bots and furniture
 // facing the camera stay readable (important in the dark theme).
-export function Lighting({ p }: { p: RoomPalette }) {
+// The key light warms toward amber around sunrise/sunset (real local time),
+// echoing the sky in the window.
+export function Lighting({ p, day, dark }: { p: RoomPalette; day: DayLight; dark: boolean }) {
+  const key = mixHex(p.keyColor, '#ffb877', day.golden * (dark ? 0.2 : 0.45))
   return (
     <>
       <ambientLight intensity={p.ambient} />
@@ -13,7 +18,7 @@ export function Lighting({ p }: { p: RoomPalette }) {
       <directionalLight
         position={[9, 13, 7]}
         intensity={p.dirLight}
-        color={p.keyColor}
+        color={key}
         castShadow
         shadow-mapSize-width={1024}
         shadow-mapSize-height={1024}

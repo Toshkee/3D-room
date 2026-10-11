@@ -16,11 +16,14 @@ import { ClaudeBotEngine } from '../engine/ClaudeBotEngine'
 import { ACTIVITY, TASKS, pick } from '../engine/content'
 import type { BotEngine, EngineHandlers } from '../engine/BotEngine'
 import { usePrefersReducedMotion } from '../usePrefersReducedMotion'
+import { sceneBus } from './sceneBus'
+import { loungeAudio } from '../audio/loungeAudio'
 
 const ACTIVITY_CAP = 40
 const GROUP_CAP = 60
 const ARTIFACT_CAP = 20
 const STORAGE_KEY = 'ai-lounge-state-v1'
+const SOUND_KEY = 'ai-lounge-sound'
 
 let seq = 0
 const uid = (p: string) => `${p}-${Date.now().toString(36)}-${++seq}`
@@ -49,6 +52,8 @@ function loadSaved(): SavedState | null {
 
 const SAVED = typeof localStorage !== 'undefined' ? loadSaved() : null
 
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
 /** Append, or replace in place when a message with the same id exists (streaming). */
 function upsert(list: Message[], message: Message): Message[] {
   const i = list.findIndex((m) => m.id === message.id)
@@ -71,6 +76,8 @@ interface LoungeState {
   view: View
   selectedId: string | null
   reducedMotion: boolean
+  /** Ambient sound + chimes (off until the user turns it on). */
+  sound: boolean
   /** Which engine is driving the bots: the local sim, or live Claude via the proxy. */
   engineKind: 'simulated' | 'claude'
   activity: Record<string, ActivityLine[]>
@@ -80,6 +87,7 @@ interface LoungeState {
   // actions
   setView(v: View): void
   toggleTheme(): void
+  toggleSound(): void
   selectBot(id: string | null): void
   sendChat(botId: string, text: string): void
   sendGroup(text: string): void
@@ -152,6 +160,22 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
     }
   }, [theme])
 
+  const [sound, setSound] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(SOUND_KEY) === '1'
+    } catch {
+      return false
+    }
+  })
+  useEffect(() => {
+    loungeAudio.setEnabled(sound)
+    try {
+      localStorage.setItem(SOUND_KEY, sound ? '1' : '0')
+    } catch {
+      /* ignore */
+    }
+  }, [sound])
+
   // Keep live refs so the engine always reads current state (roster, and the
   // conversation histories used to seed the Claude engine on hot-swap).
   const botsRef = useRef(bots)
@@ -175,6 +199,40 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
     return () => clearTimeout(id)
   }, [bots, activity, chats, group, artifacts])
 
+  // --- scene cues (speech bubbles, celebrations, bots meeting up) ------------
+  // Who last spoke in the team channel, so a reply from another bot reads as a
+  // conversation between the two (one walks over to the other in the room).
+  const lastGroupRef = useRef<{ from: string; at: number } | null>(null)
+  const pairedRef = useRef(new Set<string>())
+  const cueGroup = (message: Message) => {
+    if (message.from === 'user') {
+      lastGroupRef.current = { from: 'user', at: Date.now() }
+      return
+    }
+    const text = message.text.trim()
+    if (!text) {
+      sceneBus.emit({ type: 'typing', botId: message.from })
+      return
+    }
+    sceneBus.emit({ type: 'say', botId: message.from, id: message.id, text })
+    const paired = pairedRef.current
+    if (paired.has(message.id)) return
+    if (paired.size > 300) paired.clear()
+    paired.add(message.id)
+    const roster = botsRef.current
+    const mentioned = roster.find(
+      (b) => b.id !== message.from && new RegExp(`(^|[^\\w])@?${escapeRe(b.name)}\\b`, 'i').test(text),
+    )
+    const last = lastGroupRef.current
+    const partner =
+      mentioned?.id ??
+      (last && last.from !== message.from && last.from !== 'user' && Date.now() - last.at < 25000
+        ? last.from
+        : null)
+    if (partner) sceneBus.emit({ type: 'converse', a: message.from, b: partner })
+    lastGroupRef.current = { from: message.from, at: Date.now() }
+  }
+
   // --- engine wiring (created once) -----------------------------------------
   const [engineKind, setEngineKind] = useState<'simulated' | 'claude'>('simulated')
   const handlersRef = useRef<EngineHandlers | null>(null)
@@ -185,11 +243,29 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
           const list = [...(prev[line.botId] ?? []), line].slice(-ACTIVITY_CAP)
           return { ...prev, [line.botId]: list }
         }),
-      onStatus: (botId, patch) =>
-        setBots((prev) => prev.map((b) => (b.id === botId ? { ...b, ...patch } : b))),
-      onChat: (botId, message) =>
-        setChats((prev) => ({ ...prev, [botId]: upsert(prev[botId] ?? [], message) })),
-      onGroup: (message) => setGroup((prev) => upsert(prev, message).slice(-GROUP_CAP)),
+      onStatus: (botId, patch) => {
+        if (patch.status === 'done') {
+          const bot = botsRef.current.find((b) => b.id === botId)
+          if (bot && bot.status !== 'done') {
+            sceneBus.emit({ type: 'celebrate', botId })
+            const task = patch.task ?? bot.task
+            sceneBus.emit({ type: 'say', botId, id: `done-${botId}-${Date.now()}`, text: `Done: ${task}` })
+          }
+        }
+        setBots((prev) => prev.map((b) => (b.id === botId ? { ...b, ...patch } : b)))
+      },
+      onChat: (botId, message) => {
+        if (message.from !== 'user') {
+          const text = message.text.trim()
+          if (text) sceneBus.emit({ type: 'say', botId, id: message.id, text })
+          else sceneBus.emit({ type: 'typing', botId })
+        }
+        setChats((prev) => ({ ...prev, [botId]: upsert(prev[botId] ?? [], message) }))
+      },
+      onGroup: (message) => {
+        cueGroup(message)
+        setGroup((prev) => upsert(prev, message).slice(-GROUP_CAP))
+      },
       onArtifact: (artifact) =>
         setArtifacts((prev) => ({
           ...prev,
@@ -234,6 +310,8 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
     () => setTheme((t) => (t === 'light' ? 'dark' : 'light')),
     [],
   )
+  // Toggled from a click, so the effect above may start the audio context.
+  const toggleSound = useCallback(() => setSound((on) => !on), [])
 
   const selectBot = useCallback((id: string | null) => setSelectedId(id), [])
 
@@ -242,6 +320,7 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
     if (!trimmed) return
     const msg: Message = { id: uid('u'), from: 'user', text: trimmed, at: Date.now() }
     setChats((prev) => ({ ...prev, [botId]: [...(prev[botId] ?? []), msg] }))
+    sceneBus.emit({ type: 'typing', botId }) // the bot "composes" its reply
     engineRef.current!.sendChat(botId, trimmed)
   }, [])
 
@@ -250,6 +329,7 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
     if (!trimmed) return
     const msg: Message = { id: uid('u'), from: 'user', text: trimmed, at: Date.now() }
     setGroup((prev) => [...prev, msg].slice(-GROUP_CAP))
+    lastGroupRef.current = { from: 'user', at: Date.now() }
     engineRef.current!.sendGroup(trimmed)
   }, [])
 
@@ -283,6 +363,7 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
       task: pick(TASKS[input.role]),
       progress: 5,
     }
+    sceneBus.markEntering(id) // walks in through the door
     setBots((prev) => [...prev, { ...bot, seat: firstOpenSeat(prev) % SEATS.length }])
     setActivity((prev) => ({
       ...prev,
@@ -306,6 +387,7 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
       view,
       selectedId,
       reducedMotion,
+      sound,
       engineKind,
       activity,
       chats,
@@ -313,6 +395,7 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
       artifacts,
       setView,
       toggleTheme,
+      toggleSound,
       selectBot,
       sendChat,
       sendGroup,
@@ -326,12 +409,14 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
       view,
       selectedId,
       reducedMotion,
+      sound,
       engineKind,
       activity,
       chats,
       group,
       artifacts,
       toggleTheme,
+      toggleSound,
       selectBot,
       sendChat,
       sendGroup,

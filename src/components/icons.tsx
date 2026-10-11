@@ -33,4 +33,6 @@ export {
   Check,
   Package,
   RotateCcw,
+  Volume2,
+  VolumeX,
 } from 'lucide-react'

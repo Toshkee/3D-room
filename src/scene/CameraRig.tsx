@@ -4,14 +4,19 @@ import { OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
 import { clamp } from '../util'
 
-const HOME = new THREE.Vector3(0, 0.9, 0)
+const HOME = new THREE.Vector3(0, 1.7, 0)
 const lerp = THREE.MathUtils.lerp
+// Keep the camera on the open side of the room (walls are at −x and −z), so
+// neither dragging nor the idle auto-orbit ever ends up behind a wall.
+const AZ_MIN = 0.1
+const AZ_MAX = Math.PI / 2 - 0.1
 
 // Minimal shape of the drei/three OrbitControls we drive.
 type Ctl = {
   target: THREE.Vector3
   autoRotate: boolean
   autoRotateSpeed: number
+  getAzimuthalAngle(): number
   addEventListener(type: string, cb: () => void): void
   removeEventListener(type: string, cb: () => void): void
 }
@@ -40,7 +45,7 @@ export function CameraRig({
     <>
       <OrbitControls
         makeDefault
-        target={[0, 0.9, 0]}
+        target={[0, 1.7, 0]}
         enablePan={false}
         enableDamping
         dampingFactor={0.09}
@@ -50,6 +55,8 @@ export function CameraRig({
         maxZoom={150}
         minPolarAngle={Math.PI * 0.12}
         maxPolarAngle={Math.PI * 0.47}
+        minAzimuthAngle={AZ_MIN}
+        maxAzimuthAngle={AZ_MAX}
       />
       <Director selectedId={selectedId} positions={positions} reducedMotion={reducedMotion} homeZoom={homeZoom} />
     </>
@@ -89,7 +96,7 @@ function IntroCam({ homeZoom, onDone }: { homeZoom: number; onDone: () => void }
     const cam = camera as THREE.OrthographicCamera
     cam.position.set(lerp(3, 17, e), lerp(3.2, 14, e), lerp(15, 17, e))
     cam.zoom = lerp(homeZoom * 1.55, homeZoom, e)
-    cam.lookAt(0, lerp(1.3, 0.9, e), 0)
+    cam.lookAt(0, lerp(2.0, 1.7, e), 0)
     cam.updateProjectionMatrix()
     invalidate()
     if (t >= 1) finish()
@@ -113,6 +120,7 @@ function Director({
   const controls = useThree((s) => s.controls) as unknown as Ctl | null
   const lastInteract = useRef(0)
   const bump = useRef(false)
+  const swing = useRef(1)
   const focus = useMemo(() => new THREE.Vector3(), [])
 
   useEffect(() => {
@@ -145,7 +153,11 @@ function Director({
       controls.target.lerp(HOME, 0.06)
       const idle = now - lastInteract.current > 5
       controls.autoRotate = !reducedMotion && idle
-      controls.autoRotateSpeed = 0.45
+      // Ping-pong between the azimuth limits instead of orbiting all the way.
+      const az = controls.getAzimuthalAngle()
+      if (az <= AZ_MIN + 0.04) swing.current = -1
+      else if (az >= AZ_MAX - 0.04) swing.current = 1
+      controls.autoRotateSpeed = 0.45 * swing.current
     }
 
     cam.zoom = lerp(cam.zoom, desiredZoom, 0.05)

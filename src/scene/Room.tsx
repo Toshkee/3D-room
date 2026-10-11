@@ -1,8 +1,13 @@
-import { useMemo, useRef } from 'react'
+import { memo, useEffect, useMemo, useRef } from 'react'
 import { RoundedBox, Sparkles } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import type { RoomPalette } from '../theme'
+import type { DayLight } from './timeOfDay'
+import type { World } from './world'
+import { ArcadeGame, codeSheet, toTexture, type GameKind } from './canvasArt'
+import { Bookshelf, Door, FloorLamp, Poster, SideLamp, SkyWindow, SteamingMug, SunPatch, WallClock } from './Decor'
+import { mixHex } from '../util'
 
 // The stylized isometric lounge — now much bigger, split into zones:
 //  • back wall: a row of arcade cabinets + a big wall screen + neon signage
@@ -59,7 +64,21 @@ function GlowDecal({
   )
 }
 
-export function Room({ p }: { p: RoomPalette }) {
+// Memoized: the room only changes with the theme or the hour, not on every
+// status tick (the parts that react to bots read the shared world in useFrame).
+export const Room = memo(function Room({
+  p,
+  world,
+  dark,
+  day,
+  reducedMotion,
+}: {
+  p: RoomPalette
+  world: World
+  dark: boolean
+  day: DayLight
+  reducedMotion: boolean
+}) {
   const glow = useMemo(makeGlowTexture, [])
   return (
     <group>
@@ -113,35 +132,52 @@ export function Room({ p }: { p: RoomPalette }) {
 
       {/* big wall screen + neon sign (right half of back wall) */}
       <WallScreen p={p} />
-      <NeonSign color={p.neonA} position={[4, 4.35, -8.95]} w={4.4} />
-      {/* framed art on the left wall */}
-      <Frame position={[-10.83, 3.4, -6]} p={p} />
-      <Frame position={[-10.83, 3.4, 6]} p={p} small />
+      <NeonSign color={p.neonA} position={[4, 4.35, -8.95]} w={4.4} reducedMotion={reducedMotion} />
+      {/* a window onto the real sky above the arcades, sunlight on the floor */}
+      <SkyWindow p={p} day={day} />
+      <SunPatch day={day} dark={dark} />
 
-      {/* arcade cabinets (left half of back wall) */}
-      <Arcade position={[-6, 0, -8.3]} neon={p.neonA} p={p} />
-      <Arcade position={[-3.4, 0, -8.3]} neon={p.neonB} p={p} />
-      <Arcade position={[-0.8, 0, -8.3]} neon={p.neonC} p={p} />
+      {/* left wall, back → front: bookshelf (+ art above), posters around the
+          clock over the desks, a coffee poster; the rolling sprint whiteboard
+          (front-left corner) is rendered by Lounge3D since it reads the roster */}
+      <Bookshelf p={p} />
+      <Frame position={[-10.83, 3.55, -7.2]} p={p} small />
+      <Poster kind="ship" position={[-10.97, 3.35, -3.2]} rotationY={Math.PI / 2} dark={dark} />
+      <WallClock p={p} />
+      <Poster kind="planet" position={[-10.97, 3.35, 3.2]} rotationY={Math.PI / 2} dark={dark} />
+      <Poster kind="coffee" position={[-10.97, 2.9, 6.6]} rotationY={Math.PI / 2} dark={dark} />
+      {/* back wall, between the arcades and the screen */}
+      <Poster kind="pixel" position={[0.58, 3.15, -8.97]} size={[0.95, 1.3]} dark={dark} />
 
-      {/* workstation desks along the left wall (monitors face into the room) */}
-      <Desk position={[-10.3, 0, -3.2]} rotation={Math.PI / 2} p={p} />
-      <Desk position={[-10.3, 0, 0]} rotation={Math.PI / 2} p={p} />
-      <Desk position={[-10.3, 0, 3.2]} rotation={Math.PI / 2} p={p} />
+      {/* arcade cabinets (left half of back wall) — attract-mode games */}
+      <Arcade position={[-6, 0, -8.3]} neon={p.neonA} p={p} node="a0" game="invaders" world={world} reducedMotion={reducedMotion} />
+      <Arcade position={[-3.4, 0, -8.3]} neon={p.neonB} p={p} node="a1" game="pong" world={world} reducedMotion={reducedMotion} />
+      <Arcade position={[-0.8, 0, -8.3]} neon={p.neonC} p={p} node="a2" game="warp" world={world} reducedMotion={reducedMotion} />
 
-      {/* sitting area */}
+      {/* workstation desks along the left wall (monitors face into the room);
+          a desk's monitor + lamp take the color of the bot working at it */}
+      <Desk position={[-10.3, 0, -3.2]} rotation={Math.PI / 2} p={p} node="d0" world={world} dark={dark} />
+      <Desk position={[-10.3, 0, 0]} rotation={Math.PI / 2} p={p} node="d1" world={world} dark={dark} />
+      <Desk position={[-10.3, 0, 3.2]} rotation={Math.PI / 2} p={p} node="d2" world={world} dark={dark} />
+
+      {/* sitting area, with warm lamps + a steaming mug */}
       <Sofa p={p} />
       <Armchair p={p} />
       <Beanbag p={p} />
       <CoffeeTable p={p} />
+      <SteamingMug reducedMotion={reducedMotion} />
+      <SideLamp p={p} dark={dark} />
+      <FloorLamp p={p} dark={dark} />
 
       {/* props */}
       <PoolTable position={[7.6, 0, -1.6]} p={p} />
-      <VendingMachine position={[8.7, 0, -7.4]} p={p} />
+      <VendingMachine position={[7.6, 0, -7.4]} p={p} />
+      <Door p={p} world={world} />
 
-      {/* plants */}
-      <Plant position={[10.0, 0, -8]} p={p} />
-      <Plant position={[-10.2, 0, 7]} p={p} />
-      <Plant position={[9.6, 0, 7]} p={p} small />
+      {/* plants (sway gently) */}
+      <Plant position={[10.45, 0, 3.0]} p={p} reducedMotion={reducedMotion} />
+      <Plant position={[-10.2, 0, 8.3]} p={p} reducedMotion={reducedMotion} />
+      <Plant position={[9.6, 0, 7]} p={p} small reducedMotion={reducedMotion} />
 
       {/* neon light spill — additive glow pooling on the floor + bleeding onto
           the back wall under each emissive source (bloom amplifies it) */}
@@ -150,12 +186,13 @@ export function Room({ p }: { p: RoomPalette }) {
       <GlowDecal tex={glow} position={[-6, 0.05, -7.4]} size={[3, 3]} color={p.neonA} opacity={0.55} />
       <GlowDecal tex={glow} position={[-3.4, 0.05, -7.4]} size={[3, 3]} color={p.neonB} opacity={0.55} />
       <GlowDecal tex={glow} position={[-0.8, 0.05, -7.4]} size={[3, 3]} color={p.neonC} opacity={0.55} />
+      <GlowDecal tex={glow} position={[7.6, 0.05, -6.6]} size={[2.6, 2.4]} color={p.neonC} opacity={0.4} />
 
       {/* floating dust motes */}
       <Sparkles count={60} scale={[20, 6, 15]} position={[0, 3, -1]} size={2.4} speed={0.3} color={p.cove} opacity={0.5} />
     </group>
   )
-}
+})
 
 function neonMat(color: string, i = 0.9) {
   return <meshStandardMaterial color={color} emissive={color} emissiveIntensity={i} toneMapped={false} />
@@ -165,11 +202,32 @@ function Arcade({
   position,
   neon,
   p,
+  node,
+  game,
+  world,
+  reducedMotion,
 }: {
   position: [number, number, number]
   neon: string
   p: RoomPalette
+  node: string
+  game: GameKind
+  world: World
+  reducedMotion: boolean
 }) {
+  // Attract-mode game on a tiny pixel canvas, redrawn ~12×/sec; shows a score
+  // while a bot is playing.
+  const g = useMemo(() => new ArcadeGame(game, neon), [game]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => g.setColor(neon), [g, neon])
+  useEffect(() => () => g.tex.dispose(), [g])
+  const acc = useRef(0)
+  useFrame(({ clock }, dt) => {
+    acc.current += dt
+    if (acc.current < 1 / 12) return
+    const step = reducedMotion ? 0 : acc.current
+    acc.current = 0
+    g.draw(clock.elapsedTime, step, !!world.using[node])
+  })
   return (
     <group position={position}>
       <RoundedBox args={[1.1, 1.9, 0.85]} radius={0.07} smoothness={2} position={[0, 0.95, 0]}>
@@ -191,7 +249,7 @@ function Arcade({
       </mesh>
       <mesh position={[0, 1.47, 0.47]} rotation-x={-0.22}>
         <boxGeometry args={[0.78, 0.58, 0.02]} />
-        {neonMat(neon, 1.05)}
+        <meshBasicMaterial map={g.tex} color={[1.45, 1.45, 1.45]} toneMapped={false} />
       </mesh>
       {/* control panel */}
       <mesh position={[0, 0.98, 0.5]} rotation-x={0.62}>
@@ -326,12 +384,34 @@ function PoolTable({ position, p }: { position: [number, number, number]; p: Roo
   )
 }
 
-function NeonSign({ color, position, w }: { color: string; position: [number, number, number]; w: number }) {
+// The neon strip over the wall screen. Every so often it buzzes — a quick
+// stutter of flickers — like a real tube.
+function NeonSign({
+  color,
+  position,
+  w,
+  reducedMotion,
+}: {
+  color: string
+  position: [number, number, number]
+  w: number
+  reducedMotion: boolean
+}) {
+  const mat = useRef<THREE.MeshStandardMaterial>(null)
+  const next = useRef(6 + Math.random() * 6)
+  useFrame(({ clock }) => {
+    const m = mat.current
+    if (!m || reducedMotion) return
+    const t = clock.elapsedTime
+    if (t > next.current + 0.55) next.current = t + 8 + Math.random() * 9
+    const buzzing = t > next.current
+    m.emissiveIntensity = buzzing ? (Math.sin(t * 61) > 0.1 ? 1.2 : Math.sin(t * 23) > 0 ? 0.25 : 0.7) : 1.2
+  })
   return (
     <group position={position}>
       <mesh>
         <boxGeometry args={[w, 0.5, 0.06]} />
-        {neonMat(color, 1.2)}
+        <meshStandardMaterial ref={mat} color={color} emissive={color} emissiveIntensity={1.2} toneMapped={false} />
       </mesh>
       <mesh position={[0, 0, -0.05]}>
         <boxGeometry args={[w + 0.3, 0.8, 0.06]} />
@@ -341,15 +421,66 @@ function NeonSign({ color, position, w }: { color: string; position: [number, nu
   )
 }
 
+const LAMP_WARM = new THREE.Color('#ffc58a')
+const ACCENT_TMP = new THREE.Color()
+let codeTex: THREE.CanvasTexture | null = null
+
+// A workstation: desk, office chair, a little arm lamp, mug + papers, and a
+// monitor showing code. While a bot types here the code scrolls, the monitor
+// and lamp take on the bot's color, and the lamp throws that color onto it.
 function Desk({
   position,
   rotation = 0,
   p,
+  node,
+  world,
+  dark,
 }: {
   position: [number, number, number]
   rotation?: number
   p: RoomPalette
+  node: string
+  world: World
+  dark: boolean
 }) {
+  const screen = useMemo(() => {
+    codeTex ??= toTexture(codeSheet())
+    const t = codeTex.clone()
+    t.wrapT = THREE.RepeatWrapping
+    t.repeat.set(1, 0.3)
+    t.offset.y = Math.random()
+    t.needsUpdate = true
+    return t
+  }, [])
+  useEffect(() => () => screen.dispose(), [screen])
+  const screenMat = useRef<THREE.MeshBasicMaterial>(null)
+  const bulbMat = useRef<THREE.MeshStandardMaterial>(null)
+  const light = useRef<THREE.PointLight>(null)
+  const tmp = useMemo(() => new THREE.Color(), [])
+  const idleScreen = useMemo(() => new THREE.Color(p.neonA).multiplyScalar(0.6), [p.neonA])
+
+  useFrame((_, dt) => {
+    const u = world.using[node]
+    const k = Math.min(1, dt * 4)
+    if (screenMat.current) {
+      if (u) tmp.set(u.accent).multiplyScalar(1.5)
+      else tmp.copy(idleScreen)
+      screenMat.current.color.lerp(tmp, k)
+    }
+    if (u) screen.offset.y = (screen.offset.y + dt * 0.05) % 1
+    if (light.current) {
+      tmp.copy(LAMP_WARM)
+      if (u) tmp.lerp(ACCENT_TMP.set(u.accent), 0.6)
+      light.current.color.lerp(tmp, k)
+      const target = (u ? 3.4 : 1.1) * (dark ? 1 : 0.55)
+      light.current.intensity += (target - light.current.intensity) * k
+      if (bulbMat.current) {
+        bulbMat.current.emissive.copy(light.current.color)
+        bulbMat.current.emissiveIntensity = u ? 1.6 : 0.9
+      }
+    }
+  })
+
   return (
     <group position={position} rotation-y={rotation}>
       <RoundedBox args={[2.0, 0.1, 1.0]} radius={0.03} smoothness={2} position={[0, 0.92, 0]}>
@@ -374,13 +505,62 @@ function Desk({
         <boxGeometry args={[1.0, 0.6, 0.05]} />
         <meshStandardMaterial color={p.screen} roughness={0.4} />
       </mesh>
-      <mesh position={[0, 1.46, -0.29]}>
-        <boxGeometry args={[0.9, 0.5, 0.02]} />
-        {neonMat(p.neonA, 1.1)}
+      <mesh position={[0, 1.46, -0.293]}>
+        <planeGeometry args={[0.9, 0.5]} />
+        <meshBasicMaterial ref={screenMat} map={screen} toneMapped={false} />
       </mesh>
-      <RoundedBox args={[0.72, 0.04, 0.24]} radius={0.02} smoothness={2} position={[0, 0.98, 0.2]}>
+      {/* keyboard */}
+      <RoundedBox args={[0.72, 0.04, 0.24]} radius={0.02} smoothness={2} position={[0, 0.98, 0.28]}>
         <meshStandardMaterial color={p.frame} roughness={0.6} />
       </RoundedBox>
+      {/* mug + papers */}
+      <mesh position={[-0.72, 1.04, 0.12]}>
+        <cylinderGeometry args={[0.06, 0.055, 0.13, 14]} />
+        <meshStandardMaterial color={mixHex(p.neonB, '#ffffff', 0.45)} roughness={0.5} />
+      </mesh>
+      <mesh position={[0.5, 0.985, 0.2]} rotation-y={0.25}>
+        <boxGeometry args={[0.3, 0.02, 0.38]} />
+        <meshStandardMaterial color="#f7f5ff" roughness={0.9} />
+      </mesh>
+      {/* arm lamp */}
+      <group position={[0.78, 0.97, -0.32]}>
+        <mesh position={[0, 0.02, 0]}>
+          <cylinderGeometry args={[0.09, 0.1, 0.04, 14]} />
+          <meshStandardMaterial color={p.cabinetTop} roughness={0.5} />
+        </mesh>
+        <mesh position={[0, 0.24, 0.05]} rotation-x={0.25}>
+          <boxGeometry args={[0.03, 0.46, 0.03]} />
+          <meshStandardMaterial color={p.cabinetTop} roughness={0.5} />
+        </mesh>
+        <mesh position={[0, 0.46, 0.2]} rotation-x={-0.9}>
+          <cylinderGeometry args={[0.05, 0.11, 0.16, 14, 1, true]} />
+          <meshStandardMaterial color={p.cabinetTop} roughness={0.5} side={THREE.DoubleSide} />
+        </mesh>
+        <mesh position={[0, 0.41, 0.25]}>
+          <sphereGeometry args={[0.045, 12, 10]} />
+          <meshStandardMaterial ref={bulbMat} color="#fff3e0" emissive={LAMP_WARM} emissiveIntensity={0.9} toneMapped={false} />
+        </mesh>
+        <pointLight ref={light} position={[0, 0.36, 0.32]} color={LAMP_WARM} intensity={0.8} distance={4.5} decay={2} />
+      </group>
+      {/* office chair (the bot sits here, facing the monitor) */}
+      <group position={[0, 0, 0.98]}>
+        <RoundedBox args={[0.62, 0.1, 0.58]} radius={0.05} smoothness={2} position={[0, 0.47, 0]}>
+          <meshStandardMaterial color={p.cabinet} roughness={0.7} />
+        </RoundedBox>
+        <RoundedBox args={[0.6, 0.42, 0.08]} radius={0.05} smoothness={2} position={[0, 0.78, 0.3]}>
+          <meshStandardMaterial color={p.cabinet} roughness={0.7} />
+        </RoundedBox>
+        <mesh position={[0, 0.24, 0]}>
+          <cylinderGeometry args={[0.035, 0.035, 0.4, 8]} />
+          <meshStandardMaterial color={p.cabinetTop} roughness={0.5} />
+        </mesh>
+        {[0, Math.PI / 2].map((r) => (
+          <mesh key={r} position={[0, 0.05, 0]} rotation-y={r + Math.PI / 4}>
+            <boxGeometry args={[0.6, 0.05, 0.06]} />
+            <meshStandardMaterial color={p.cabinetTop} roughness={0.5} />
+          </mesh>
+        ))}
+      </group>
     </group>
   )
 }
@@ -489,18 +669,30 @@ function Plant({
   position,
   p,
   small = false,
+  reducedMotion,
 }: {
   position: [number, number, number]
   p: RoomPalette
   small?: boolean
+  reducedMotion: boolean
 }) {
   const s = small ? 0.8 : 1.1
+  const leaves = useRef<THREE.Group>(null)
+  const ph = position[0] * 1.7 + position[2]
+  useFrame(({ clock }) => {
+    if (!leaves.current || reducedMotion) return
+    const t = clock.elapsedTime
+    leaves.current.rotation.z = Math.sin(t * 0.9 + ph) * 0.045
+    leaves.current.rotation.x = Math.sin(t * 0.7 + ph * 1.3) * 0.035
+  })
   return (
     <group position={position} scale={s}>
       <mesh position={[0, 0.3, 0]}>
         <cylinderGeometry args={[0.32, 0.26, 0.6, 14]} />
         <meshStandardMaterial color={p.plantPot} roughness={0.9} />
       </mesh>
+      <group ref={leaves} position={[0, 0.6, 0]}>
+      <group position={[0, -0.6, 0]}>
       <mesh position={[0, 1.02, 0]}>
         <sphereGeometry args={[0.56, 14, 12]} />
         <meshStandardMaterial color={p.plantLeaf} roughness={1} flatShading />
@@ -513,6 +705,8 @@ function Plant({
         <sphereGeometry args={[0.32, 12, 10]} />
         <meshStandardMaterial color={p.plantLeaf} roughness={1} flatShading />
       </mesh>
+      </group>
+      </group>
     </group>
   )
 }
