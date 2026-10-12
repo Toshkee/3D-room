@@ -3,11 +3,11 @@ import { LoungeProvider, useLounge } from './state/LoungeContext'
 import { TopBar } from './components/TopBar'
 import { Lounge3D } from './scene/Lounge3D'
 import { Dashboard } from './components/Dashboard'
-import { GroupChat } from './components/GroupChat'
 import { BotPanel } from './components/BotPanel'
-import { ImportBotModal } from './components/ImportBotModal'
+import { AddRepoModal } from './components/AddRepoModal'
+import { EmptyState, OfflineBanner } from './components/EmptyState'
 
-function LoungeView() {
+function LoungeView({ onAddRepo }: { onAddRepo: () => void }) {
   const { bots, theme, selectedId, selectBot, reducedMotion } = useLounge()
   return (
     <div className="stage">
@@ -18,31 +18,37 @@ function LoungeView() {
         onSelect={selectBot}
         reducedMotion={reducedMotion}
       />
-      <p className="stage__hint" aria-hidden>
-        Drag to look around · scroll to zoom · click a bot to open it
-      </p>
+      {bots.length === 0 ? (
+        <div className="stage__empty">
+          <EmptyState onAddRepo={onAddRepo} />
+        </div>
+      ) : (
+        <p className="stage__hint" aria-hidden>
+          Drag to look around · scroll to zoom · click a bot to open it
+        </p>
+      )}
     </div>
   )
 }
 
 function AppInner() {
   const { view, selectedId } = useLounge()
-  const [importOpen, setImportOpen] = useState(false)
+  const [addOpen, setAddOpen] = useState(false)
   // Stable callbacks — the lounge state updates constantly, and fresh closures
   // here would invalidate effects in the children on every tick.
-  const openImport = useCallback(() => setImportOpen(true), [])
-  const closeImport = useCallback(() => setImportOpen(false), [])
+  const openAdd = useCallback(() => setAddOpen(true), [])
+  const closeAdd = useCallback(() => setAddOpen(false), [])
 
   return (
     <div className="app" data-panel={selectedId ? 'open' : undefined}>
-      <TopBar onImport={openImport} />
+      <TopBar onAddRepo={openAdd} />
+      <OfflineBanner />
       <main className="main">
-        {view === 'lounge' && <LoungeView />}
-        {view === 'dashboard' && <Dashboard />}
-        {view === 'group' && <GroupChat />}
+        {view === 'lounge' && <LoungeView onAddRepo={openAdd} />}
+        {view === 'dashboard' && <Dashboard onAddRepo={openAdd} />}
       </main>
       <BotPanel />
-      {importOpen && <ImportBotModal onClose={closeImport} />}
+      {addOpen && <AddRepoModal onClose={closeAdd} />}
     </div>
   )
 }

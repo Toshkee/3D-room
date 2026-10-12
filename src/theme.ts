@@ -1,29 +1,10 @@
-import type { Role, Theme } from './types'
+import type { Theme } from './types'
 
 // One global accent (indigo/violet) — active UI states, focus, brand, primary
 // buttons. Per-bot accents live on each Bot.
 export const ACCENT = '#6d5efc'
 
-// Per-role presentation: a human label + a sensible default accent the import
-// form pre-fills. (Role icons come from lucide — see components/icons.tsx.)
-export const ROLE_META: Record<Role, { label: string; accent: string }> = {
-  engineer: { label: 'Engineer', accent: '#6d5efc' },
-  researcher: { label: 'Researcher', accent: '#2aa7ff' },
-  designer: { label: 'Designer', accent: '#ff5fa2' },
-  writer: { label: 'Writer', accent: '#14b8a6' },
-  analyst: { label: 'Analyst', accent: '#f5a524' },
-  coordinator: { label: 'Coordinator', accent: '#22c55e' },
-}
-
-export const ROLES: Role[] = [
-  'engineer',
-  'researcher',
-  'designer',
-  'writer',
-  'analyst',
-  'coordinator',
-]
-
+// Colors offered when adding a repo (the server picks an unused one by default).
 export const ACCENT_SWATCHES = [
   '#6d5efc',
   '#2aa7ff',

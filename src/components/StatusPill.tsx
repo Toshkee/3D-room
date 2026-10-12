@@ -5,6 +5,7 @@ export const STATUS_META: Record<Status, { label: string; live: boolean }> = {
   thinking: { label: 'Thinking', live: true },
   idle: { label: 'Idle', live: false },
   done: { label: 'Done', live: false },
+  waiting: { label: 'Needs you', live: true },
 }
 
 // The floating "what am I doing" pill. `live` statuses get a pulsing dot.

@@ -8,43 +8,60 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import type { ActivityLine, Artifact, Bot, Message, Role, Theme, View } from '../types'
-import { CREW, SEATS, firstOpenSeat } from '../data/bots'
-import { ROLE_META } from '../theme'
-import { SimulatedBotEngine } from '../engine/SimulatedBotEngine'
-import { ClaudeBotEngine } from '../engine/ClaudeBotEngine'
-import { ACTIVITY, TASKS, pick } from '../engine/content'
-import type { BotEngine, EngineHandlers } from '../engine/BotEngine'
+import type {
+  ActivityLine,
+  AgentRun,
+  Bot,
+  Change,
+  Connection,
+  Message,
+  PermissionRequest,
+  RepoLink,
+  Theme,
+  View,
+} from '../types'
+import { SEATS, firstOpenSeat } from '../data/bots'
+import {
+  RepoAgentLink,
+  agentBotId,
+  type AgentInfo,
+  type LinkHandlers,
+  type RepoSuggestion,
+} from '../engine/RepoAgentLink'
 import { usePrefersReducedMotion } from '../usePrefersReducedMotion'
 import { sceneBus } from './sceneBus'
 import { loungeAudio } from '../audio/loungeAudio'
 
 const ACTIVITY_CAP = 40
-const GROUP_CAP = 60
-const ARTIFACT_CAP = 20
-const STORAGE_KEY = 'ai-lounge-state-v1'
+const CHAT_CAP = 200
+const CHANGES_CAP = 20
+const STORAGE_KEY = 'ai-lounge-state-v2'
+const OLD_STORAGE_KEYS = ['ai-lounge-state-v1']
 const SOUND_KEY = 'ai-lounge-sound'
 
 let seq = 0
 const uid = (p: string) => `${p}-${Date.now().toString(36)}-${++seq}`
 
 // --- persistence -------------------------------------------------------------
+// The server owns the roster and the sessions; the browser keeps what it has
+// seen (chats, feed, changes) plus the bots, so the room isn't empty while the
+// server is starting or down, and every bot keeps its seat across reloads.
 
 interface SavedState {
   bots: Bot[]
   activity: Record<string, ActivityLine[]>
   chats: Record<string, Message[]>
-  group: Message[]
-  artifacts: Record<string, Artifact[]>
+  changes: Record<string, Change[]>
 }
 
 function loadSaved(): SavedState | null {
   try {
+    for (const key of OLD_STORAGE_KEYS) localStorage.removeItem(key) // the invented crew's era
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return null
     const s = JSON.parse(raw) as SavedState
-    if (!Array.isArray(s.bots) || !s.bots.length) return null
-    return s
+    if (!Array.isArray(s.bots)) return null
+    return { bots: s.bots.filter((b) => b.agent), activity: s.activity ?? {}, chats: s.chats ?? {}, changes: s.changes ?? {} }
   } catch {
     return null
   }
@@ -52,22 +69,35 @@ function loadSaved(): SavedState | null {
 
 const SAVED = typeof localStorage !== 'undefined' ? loadSaved() : null
 
-const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-
 /** Append, or replace in place when a message with the same id exists (streaming). */
 function upsert(list: Message[], message: Message): Message[] {
   const i = list.findIndex((m) => m.id === message.id)
-  if (i < 0) return [...list, message]
+  if (i < 0) return [...list, message].slice(-CHAT_CAP)
   const next = list.slice()
   next[i] = message
   return next
 }
 
-export interface NewBot {
-  name: string
-  role: Role
-  accent: string
-  blurb: string
+function without<T>(rec: Record<string, T>, key: string): Record<string, T> {
+  if (!(key in rec)) return rec
+  const next = { ...rec }
+  delete next[key]
+  return next
+}
+
+const linkOf = (a: AgentInfo): RepoLink => ({
+  id: a.id,
+  repo: a.repo,
+  path: a.path,
+  model: a.model,
+  effort: a.effort,
+  autoEdits: a.autoEdits,
+})
+
+export interface NewRepo {
+  path: string
+  name?: string
+  accent?: string
 }
 
 interface LoungeState {
@@ -78,70 +108,46 @@ interface LoungeState {
   reducedMotion: boolean
   /** Ambient sound + chimes (off until the user turns it on). */
   sound: boolean
-  /** Which engine is driving the bots: the local sim, or live Claude via the proxy. */
-  engineKind: 'simulated' | 'claude'
+  /** Whether the local server (and so every repo agent) is reachable. */
+  connection: Connection
   activity: Record<string, ActivityLine[]>
   chats: Record<string, Message[]>
-  group: Message[]
-  artifacts: Record<string, Artifact[]>
+  /** What each run changed in the repo, per bot. */
+  changes: Record<string, Change[]>
+  /** Steps waiting for your Allow / Deny, per bot. */
+  permissions: Record<string, PermissionRequest[]>
+  /** Stats of the last finished run, per bot. */
+  runs: Record<string, AgentRun>
   // actions
   setView(v: View): void
   toggleTheme(): void
   toggleSound(): void
   selectBot(id: string | null): void
   sendChat(botId: string, text: string): void
-  sendGroup(text: string): void
-  assignTask(botId: string, brief: string): void
-  addBot(input: NewBot): Bot
-  resetLounge(): void
+  answerPermission(botId: string, requestId: string, allow: boolean): void
+  stopAgent(botId: string): void
+  setAgentOptions(botId: string, patch: { model?: string; effort?: string; autoEdits?: boolean }): void
+  resetAgentSession(botId: string): void
+  addRepo(input: NewRepo): Promise<{ botId: string } | { error: string }>
+  removeRepo(botId: string): Promise<string | null>
+  suggestRepos(): Promise<RepoSuggestion[]>
 }
 
 const Ctx = createContext<LoungeState | null>(null)
 
-// --- initial simulation state ------------------------------------------------
-
-function seedActivity(bots: Bot[]): Record<string, ActivityLine[]> {
-  const out: Record<string, ActivityLine[]> = {}
-  for (const b of bots) {
-    out[b.id] = [pick(ACTIVITY[b.role]), pick(ACTIVITY[b.role])].map((l) => ({
-      id: uid('act'),
-      botId: b.id,
-      text: l.text,
-      kind: l.kind,
-      at: Date.now(),
-    }))
-  }
-  return out
-}
-
-function seedGroup(bots: Bot[]): Message[] {
-  // A short, coherent opener so the channel isn't empty on first open.
-  const coord = bots.find((b) => b.role === 'coordinator') ?? bots[0]
-  const res = bots.find((b) => b.role === 'researcher') ?? bots[1] ?? bots[0]
-  const eng = bots.find((b) => b.role === 'engineer') ?? bots[0]
-  const msgs: Omit<Message, 'id' | 'at'>[] = [
-    { from: coord.id, text: 'Morning team — let’s make today count.' },
-    { from: res.id, text: 'Dropped my findings in the doc: rerank, then cache.' },
-    { from: eng.id, text: 'Nice. I’ll wire it into the API layer this morning.' },
-    { from: coord.id, text: 'Ping me if anything blocks 🙌' },
-  ]
-  return msgs.map((m, i) => ({ ...m, id: uid('grp'), at: Date.now() - (4 - i) * 60000 }))
-}
-
 export function LoungeProvider({ children }: { children: ReactNode }) {
   const reducedMotion = usePrefersReducedMotion()
 
-  const [bots, setBots] = useState<Bot[]>(() => SAVED?.bots ?? CREW)
+  // Restored bots start idle: nothing is running until the server says so.
+  const [bots, setBots] = useState<Bot[]>(() => (SAVED?.bots ?? []).map((b) => ({ ...b, status: 'idle' })))
   const [view, setView] = useState<View>('lounge')
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [activity, setActivity] = useState<Record<string, ActivityLine[]>>(
-    () => SAVED?.activity ?? seedActivity(CREW),
-  )
+  const [connection, setConnection] = useState<Connection>('connecting')
+  const [activity, setActivity] = useState<Record<string, ActivityLine[]>>(() => SAVED?.activity ?? {})
   const [chats, setChats] = useState<Record<string, Message[]>>(() => SAVED?.chats ?? {})
-  const [group, setGroup] = useState<Message[]>(() => SAVED?.group ?? seedGroup(CREW))
-  const [artifacts, setArtifacts] = useState<Record<string, Artifact[]>>(
-    () => SAVED?.artifacts ?? {},
-  )
+  const [changes, setChanges] = useState<Record<string, Change[]>>(() => SAVED?.changes ?? {})
+  const [permissions, setPermissions] = useState<Record<string, PermissionRequest[]>>({})
+  const [runs, setRuns] = useState<Record<string, AgentRun>>({})
   const [theme, setTheme] = useState<Theme>(() => {
     const saved =
       typeof localStorage !== 'undefined' && localStorage.getItem('ai-lounge-theme')
@@ -176,84 +182,96 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
     }
   }, [sound])
 
-  // Keep live refs so the engine always reads current state (roster, and the
-  // conversation histories used to seed the Claude engine on hot-swap).
+  // Live ref so handlers and actions always read the current roster.
   const botsRef = useRef(bots)
   botsRef.current = bots
-  const chatsRef = useRef(chats)
-  chatsRef.current = chats
-  const groupRef = useRef(group)
-  groupRef.current = group
 
-  // Persist everything the room accumulates (debounced; theme is stored
-  // separately under its own key).
+  // Persist what the room accumulates (debounced; theme and sound have their
+  // own keys).
   useEffect(() => {
     const id = setTimeout(() => {
       try {
-        const state: SavedState = { bots, activity, chats, group, artifacts }
+        const state: SavedState = { bots, activity, chats, changes }
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
       } catch {
         /* storage full/blocked — persistence is best-effort */
       }
     }, 400)
     return () => clearTimeout(id)
-  }, [bots, activity, chats, group, artifacts])
+  }, [bots, activity, chats, changes])
 
-  // --- scene cues (speech bubbles, celebrations, bots meeting up) ------------
-  // Who last spoke in the team channel, so a reply from another bot reads as a
-  // conversation between the two (one walks over to the other in the room).
-  const lastGroupRef = useRef<{ from: string; at: number } | null>(null)
-  const pairedRef = useRef(new Set<string>())
-  const cueGroup = (message: Message) => {
-    if (message.from === 'user') {
-      lastGroupRef.current = { from: 'user', at: Date.now() }
-      return
-    }
-    const text = message.text.trim()
-    if (!text) {
-      sceneBus.emit({ type: 'typing', botId: message.from })
-      return
-    }
-    sceneBus.emit({ type: 'say', botId: message.from, id: message.id, text })
-    const paired = pairedRef.current
-    if (paired.has(message.id)) return
-    if (paired.size > 300) paired.clear()
-    paired.add(message.id)
-    const roster = botsRef.current
-    const mentioned = roster.find(
-      (b) => b.id !== message.from && new RegExp(`(^|[^\\w])@?${escapeRe(b.name)}\\b`, 'i').test(text),
-    )
-    const last = lastGroupRef.current
-    const partner =
-      mentioned?.id ??
-      (last && last.from !== message.from && last.from !== 'user' && Date.now() - last.at < 25000
-        ? last.from
-        : null)
-    if (partner) sceneBus.emit({ type: 'converse', a: message.from, b: partner })
-    lastGroupRef.current = { from: message.from, at: Date.now() }
-  }
-
-  // --- engine wiring (created once) -----------------------------------------
-  const [engineKind, setEngineKind] = useState<'simulated' | 'claude'>('simulated')
-  const handlersRef = useRef<EngineHandlers | null>(null)
+  // --- the link to the server (created once) ---------------------------------
+  const handlersRef = useRef<LinkHandlers | null>(null)
   if (!handlersRef.current) {
     handlersRef.current = {
+      onConnection: (state) => {
+        setConnection(state)
+        if (state !== 'offline') return
+        // Nothing runs while the server is down: no one is working or waiting.
+        setPermissions((prev) => (Object.keys(prev).length ? {} : prev))
+        setBots((prev) => (prev.some((b) => b.status !== 'idle') ? prev.map((b) => ({ ...b, status: 'idle' })) : prev))
+      },
+      onRoster: (agents, full) => {
+        setBots((prev) => {
+          let next = full ? prev.filter((b) => agents.some((a) => agentBotId(a.id) === b.id)) : prev
+          for (const a of agents) {
+            const id = agentBotId(a.id)
+            const existing = next.find((b) => b.id === id)
+            if (existing) {
+              next = next.map((b) =>
+                b.id === id
+                  ? {
+                      ...b,
+                      name: a.name,
+                      accent: a.accent,
+                      blurb: a.blurb,
+                      agent: linkOf(a),
+                      status: a.status === 'idle' && b.status === 'done' ? b.status : a.status,
+                    }
+                  : b,
+              )
+            } else {
+              sceneBus.markEntering(id) // a new repo bot walks in through the door
+              next = [
+                ...next,
+                {
+                  id,
+                  name: a.name,
+                  accent: a.accent,
+                  blurb: a.blurb,
+                  seat: firstOpenSeat(next) % SEATS.length,
+                  status: a.status,
+                  task: a.lastRun?.prompt ?? `Ready in ${a.repo}`,
+                  agent: linkOf(a),
+                },
+              ]
+            }
+          }
+          return next
+        })
+      },
+      onRemoved: (botId) => {
+        setBots((prev) => prev.filter((b) => b.id !== botId))
+        setSelectedId((cur) => (cur === botId ? null : cur))
+        setActivity((prev) => without(prev, botId))
+        setChats((prev) => without(prev, botId))
+        setChanges((prev) => without(prev, botId))
+        setPermissions((prev) => without(prev, botId))
+        setRuns((prev) => without(prev, botId))
+      },
+      onStatus: (botId, patch) => {
+        if (patch.status === 'done') {
+          const bot = botsRef.current.find((b) => b.id === botId)
+          // Its final answer is already in the speech bubble; just celebrate.
+          if (bot && bot.status !== 'done') sceneBus.emit({ type: 'celebrate', botId })
+        }
+        setBots((prev) => prev.map((b) => (b.id === botId ? { ...b, ...patch } : b)))
+      },
       onActivity: (line) =>
         setActivity((prev) => {
           const list = [...(prev[line.botId] ?? []), line].slice(-ACTIVITY_CAP)
           return { ...prev, [line.botId]: list }
         }),
-      onStatus: (botId, patch) => {
-        if (patch.status === 'done') {
-          const bot = botsRef.current.find((b) => b.id === botId)
-          if (bot && bot.status !== 'done') {
-            sceneBus.emit({ type: 'celebrate', botId })
-            const task = patch.task ?? bot.task
-            sceneBus.emit({ type: 'say', botId, id: `done-${botId}-${Date.now()}`, text: `Done: ${task}` })
-          }
-        }
-        setBots((prev) => prev.map((b) => (b.id === botId ? { ...b, ...patch } : b)))
-      },
       onChat: (botId, message) => {
         if (message.from !== 'user') {
           const text = message.text.trim()
@@ -262,48 +280,42 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
         }
         setChats((prev) => ({ ...prev, [botId]: upsert(prev[botId] ?? [], message) }))
       },
-      onGroup: (message) => {
-        cueGroup(message)
-        setGroup((prev) => upsert(prev, message).slice(-GROUP_CAP))
-      },
-      onArtifact: (artifact) =>
-        setArtifacts((prev) => ({
+      onChanges: (change) =>
+        setChanges((prev) => ({
           ...prev,
-          [artifact.botId]: [...(prev[artifact.botId] ?? []), artifact].slice(-ARTIFACT_CAP),
+          [change.botId]: [...(prev[change.botId] ?? []).filter((c) => c.id !== change.id), change].slice(
+            -CHANGES_CAP,
+          ),
         })),
+      onPermission: (botId, pending) => {
+        setPermissions((prev) => ({ ...prev, [botId]: pending }))
+        const first = pending[0]
+        if (first) {
+          sceneBus.emit({ type: 'attention', botId })
+          const ask =
+            first.tool === 'Bash'
+              ? `May I run: ${first.detail}`
+              : `May I ${first.summary.charAt(0).toLowerCase()}${first.summary.slice(1)}?`
+          sceneBus.emit({ type: 'say', botId, id: first.requestId, text: ask })
+        }
+      },
+      onRun: (botId, run) => setRuns((prev) => ({ ...prev, [botId]: run })),
     }
   }
-  const engineRef = useRef<BotEngine | null>(null)
-  if (!engineRef.current) {
-    engineRef.current = new SimulatedBotEngine(() => botsRef.current, handlersRef.current)
-  }
+  const linkRef = useRef<RepoAgentLink | null>(null)
+  if (!linkRef.current) linkRef.current = new RepoAgentLink(handlersRef.current)
 
   useEffect(() => {
-    let cancelled = false
-    engineRef.current!.start()
-    // Probe the local Claude proxy; if it's up, hot-swap in the real engine.
-    // Without a proxy the room keeps running on the simulation.
-    ;(async () => {
-      try {
-        const res = await fetch('/api/health')
-        if (!res.ok) return
-        const info = (await res.json()) as { ok?: boolean }
-        if (cancelled || !info.ok) return
-        engineRef.current!.stop()
-        const claude = new ClaudeBotEngine(() => botsRef.current, handlersRef.current!)
-        claude.seed(chatsRef.current, groupRef.current) // bots remember past sessions
-        engineRef.current = claude
-        engineRef.current.start()
-        setEngineKind('claude')
-      } catch {
-        /* proxy not running — stay on the simulation */
-      }
-    })()
-    return () => {
-      cancelled = true
-      engineRef.current!.stop()
-    }
+    const link = linkRef.current!
+    link.start()
+    return () => link.stop()
   }, [])
+
+  // A pending Allow / Deny shows in the tab title, so you notice from another tab.
+  const pendingCount = Object.values(permissions).reduce((n, l) => n + l.length, 0)
+  useEffect(() => {
+    document.title = pendingCount ? `(${pendingCount}) AI Lounge` : 'AI Lounge'
+  }, [pendingCount])
 
   // --- actions --------------------------------------------------------------
   const toggleTheme = useCallback(
@@ -315,70 +327,55 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
 
   const selectBot = useCallback((id: string | null) => setSelectedId(id), [])
 
+  /** A note from the lounge itself in a bot's feed (not something it did). */
+  const note = useCallback((botId: string, text: string, kind: ActivityLine['kind'] = 'info') => {
+    handlersRef.current!.onActivity({ id: uid('act'), botId, text, kind, at: Date.now() })
+  }, [])
+
   const sendChat = useCallback((botId: string, text: string) => {
     const trimmed = text.trim()
-    if (!trimmed) return
+    const bot = botsRef.current.find((b) => b.id === botId)
+    if (!trimmed || !bot) return
     const msg: Message = { id: uid('u'), from: 'user', text: trimmed, at: Date.now() }
-    setChats((prev) => ({ ...prev, [botId]: [...(prev[botId] ?? []), msg] }))
+    setChats((prev) => ({ ...prev, [botId]: upsert(prev[botId] ?? [], msg) }))
     sceneBus.emit({ type: 'typing', botId }) // the bot "composes" its reply
-    engineRef.current!.sendChat(botId, trimmed)
+    // A real run in the repo; its reply streams back over the link.
+    void linkRef.current!.send(botId, trimmed, { model: bot.agent.model, effort: bot.agent.effort }).then((err) => {
+      if (!err) return
+      handlersRef.current!.onChat(botId, { id: uid('sys'), from: botId, text: err, at: Date.now() })
+    })
   }, [])
 
-  const sendGroup = useCallback((text: string) => {
-    const trimmed = text.trim()
-    if (!trimmed) return
-    const msg: Message = { id: uid('u'), from: 'user', text: trimmed, at: Date.now() }
-    setGroup((prev) => [...prev, msg].slice(-GROUP_CAP))
-    lastGroupRef.current = { from: 'user', at: Date.now() }
-    engineRef.current!.sendGroup(trimmed)
+  const answerPermission = useCallback((botId: string, requestId: string, allow: boolean) => {
+    linkRef.current!.answer(botId, requestId, allow)
   }, [])
 
-  const assignTask = useCallback((botId: string, brief: string) => {
-    const trimmed = brief.trim()
-    if (!trimmed) return
-    engineRef.current!.assignTask(botId, trimmed)
-  }, [])
+  const stopAgent = useCallback((botId: string) => linkRef.current!.stopRun(botId), [])
 
-  const resetLounge = useCallback(() => {
-    try {
-      localStorage.removeItem(STORAGE_KEY)
-    } catch {
-      /* ignore */
-    }
-    location.reload()
-  }, [])
+  // A fresh session forgets the conversation, so the thread is cleared too —
+  // otherwise the chat would show context the bot no longer has.
+  const resetAgentSession = useCallback(
+    (botId: string) => {
+      void linkRef.current!.reset(botId).then((err) => {
+        if (err) return note(botId, `Couldn't start a new session: ${err}`, 'thought')
+        setChats((prev) => without(prev, botId))
+        note(botId, 'New session: previous conversation forgotten')
+      })
+    },
+    [note],
+  )
 
-  const addBot = useCallback((input: NewBot): Bot => {
-    const meta = ROLE_META[input.role]
-    const id = `bot-${uid('n')}`
-    const name = input.name.trim() || meta.label
-    const bot: Bot = {
-      id,
-      name,
-      role: input.role,
-      accent: input.accent,
-      blurb: input.blurb.trim() || `A ${meta.label.toLowerCase()} bot.`,
-      seat: 0, // real seat assigned inside setBots against the live roster
-      status: 'working',
-      task: pick(TASKS[input.role]),
-      progress: 5,
-    }
-    sceneBus.markEntering(id) // walks in through the door
-    setBots((prev) => [...prev, { ...bot, seat: firstOpenSeat(prev) % SEATS.length }])
-    setActivity((prev) => ({
-      ...prev,
-      [id]: [
-        {
-          id: uid('act'),
-          botId: id,
-          text: `Joined the lounge — starting: ${bot.task}`,
-          kind: 'info',
-          at: Date.now(),
-        },
-      ],
-    }))
-    return bot
-  }, [])
+  const setAgentOptions = useCallback(
+    (botId: string, patch: { model?: string; effort?: string; autoEdits?: boolean }) => {
+      setBots((prev) => prev.map((b) => (b.id === botId ? { ...b, agent: { ...b.agent, ...patch } } : b)))
+      linkRef.current!.settings(botId, patch)
+    },
+    [],
+  )
+
+  const addRepo = useCallback((input: NewRepo) => linkRef.current!.add(input), [])
+  const removeRepo = useCallback((botId: string) => linkRef.current!.remove(botId), [])
+  const suggestRepos = useCallback(() => linkRef.current!.suggest(), [])
 
   const value = useMemo<LoungeState>(
     () => ({
@@ -388,20 +385,24 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
       selectedId,
       reducedMotion,
       sound,
-      engineKind,
+      connection,
       activity,
       chats,
-      group,
-      artifacts,
+      changes,
+      permissions,
+      runs,
       setView,
       toggleTheme,
       toggleSound,
       selectBot,
       sendChat,
-      sendGroup,
-      assignTask,
-      addBot,
-      resetLounge,
+      answerPermission,
+      stopAgent,
+      setAgentOptions,
+      resetAgentSession,
+      addRepo,
+      removeRepo,
+      suggestRepos,
     }),
     [
       bots,
@@ -410,19 +411,23 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
       selectedId,
       reducedMotion,
       sound,
-      engineKind,
+      connection,
       activity,
       chats,
-      group,
-      artifacts,
+      changes,
+      permissions,
+      runs,
       toggleTheme,
       toggleSound,
       selectBot,
       sendChat,
-      sendGroup,
-      assignTask,
-      addBot,
-      resetLounge,
+      answerPermission,
+      stopAgent,
+      setAgentOptions,
+      resetAgentSession,
+      addRepo,
+      removeRepo,
+      suggestRepos,
     ],
   )
 

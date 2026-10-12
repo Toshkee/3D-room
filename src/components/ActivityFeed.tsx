@@ -20,7 +20,7 @@ export function ActivityFeed({
 
   return (
     <div className="feed" ref={ref}>
-      {lines.length === 0 && <p className="feed__empty">Warming up…</p>}
+      {lines.length === 0 && <p className="feed__empty">Nothing yet. Every file it reads, edits or command it runs shows up here.</p>}
       {lines.map((l, i) => (
         <div className="feed__line" data-kind={l.kind} key={l.id}>
           <span className="feed__time">{fmtTime(l.at)}</span>

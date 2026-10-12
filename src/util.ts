@@ -2,6 +2,16 @@ export function fmtTime(at: number): string {
   return new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
+/** "just now", "5 min ago", "3 h ago", else the date. */
+export function fmtAgo(at: number, now = Date.now()): string {
+  const min = Math.round((now - at) / 60000)
+  if (min < 1) return 'just now'
+  if (min < 60) return `${min} min ago`
+  const h = Math.round(min / 60)
+  if (h < 24) return `${h} h ago`
+  return new Date(at).toLocaleDateString([], { day: 'numeric', month: 'short' })
+}
+
 export const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 
 // Linear blend between two hex colors → hex string. t=0 → a, t=1 → b.

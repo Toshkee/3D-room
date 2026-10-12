@@ -3,25 +3,24 @@ import { useSyncExternalStore } from 'react'
 // ---------------------------------------------------------------------------
 // Scene cues — the ephemeral "something just happened" signals the 3D room and
 // the sound layer react to: a bot speaking or typing a reply (speech bubbles),
-// finishing a task (celebration), two bots striking up a conversation (one
-// walks over to the other), a bot typing at a desk (keyboard sounds), and a
-// newly imported bot walking in through the door.
+// finishing a run (celebration), needing your OK (attention), a bot typing at a
+// desk (keyboard sounds), and a newly added repo's bot walking in the door.
 //
 // This is NOT app state: nothing here is persisted or rendered by the DOM
-// views. LoungeContext (and the scene itself) emit; BotAvatar, the scene
-// conductor and the audio layer subscribe. Keeping it outside React means a
+// views. LoungeContext (and the scene itself) emit; BotAvatar and the audio
+// layer subscribe. Keeping it outside React means a
 // streaming reply only re-renders that one bot's bubble, not the whole canvas.
 // ---------------------------------------------------------------------------
 
 export type Cue =
-  /** A bot said something (group or 1:1). Same id re-emitted as text streams in. */
+  /** A bot said something. Same id re-emitted as text streams in. */
   | { type: 'say'; botId: string; id: string; text: string }
   /** A bot is composing a reply — show the typing dots. */
   | { type: 'typing'; botId: string }
-  /** A bot finished its task. */
+  /** A bot finished a run. */
   | { type: 'celebrate'; botId: string }
-  /** `a` addressed `b` in the team channel — they should meet up. */
-  | { type: 'converse'; a: string; b: string }
+  /** A bot needs your Allow / Deny. */
+  | { type: 'attention'; botId: string }
 
 export interface Speech {
   id: string
@@ -71,7 +70,7 @@ export const sceneBus = {
   },
 
   /**
-   * An imported bot should walk in through the door instead of popping in.
+   * A newly added bot should walk in through the door instead of popping in.
    * Not consumed on read (StrictMode mounts effects twice in dev); the mark
    * simply expires, so a later remount of the room doesn't replay it.
    */

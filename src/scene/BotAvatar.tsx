@@ -6,13 +6,14 @@ import type { Bot } from '../types'
 import { SEATS } from '../data/bots'
 import { ROAM, chooseGoal, dwellFor, nearestNode, node, pathTo, suits } from '../data/roam'
 import { StatusPill } from '../components/StatusPill'
-import { ROLE_ICON } from '../components/icons'
+import { FolderGit2 } from '../components/icons'
 import { hash01, mixHex } from '../util'
 import { sceneBus } from '../state/sceneBus'
 import { SpeechBubble } from './SpeechBubble'
 import { startTalk, type World } from './world'
 
 const EYE = '#8ff0ff'
+const ATTENTION = new THREE.Color('#ffb020')
 const LABEL_Y = 2.0
 
 type Mode = 'dwell' | 'travel'
@@ -34,6 +35,7 @@ type Pose =
   | 'listen'
   | 'wave'
   | 'cheer'
+  | 'raise'
 
 interface Base {
   aLx: number
@@ -65,6 +67,7 @@ const POSE_BASE: Record<Pose, Partial<Base>> = {
   listen: { hx: 0.06 },
   wave: { aRz: 2.6 },
   cheer: { aLz: -2.7, aRz: 2.7 },
+  raise: { aRz: 2.95, aRx: -0.15, hx: -0.08 },
 }
 
 // Shared confetti burst for "done": a few glowing bits fly out of the head.
@@ -90,9 +93,10 @@ function shortAngle(a: number) {
 //              scribbles on the whiteboard
 //   idle     → arcades, pool, sofa, grabs a can from the vending machine
 //   done     → hops with both arms up + a confetti burst
-// It also walks over to a bot it's talking to in the team channel (both turn
-// to face each other and gesture), waves when you select it, shows a speech
-// bubble with what it just said, and walks in through the door when imported.
+// Between runs it now and then walks over to another free bot for a chat (the
+// Conductor pairs them; both face each other and gesture), waves when you
+// select it, raises a hand when it needs your OK, shows a speech bubble with
+// what it just said, and walks in through the door when its repo is added.
 // All FSM state lives in refs — no React re-renders per frame. Memoized so a
 // tick on one bot doesn't re-render every other bot's <Html> badge.
 export const BotAvatar = memo(function BotAvatar({
@@ -109,7 +113,6 @@ export const BotAvatar = memo(function BotAvatar({
   world: World
 }) {
   const phase = hash01(bot.id) * Math.PI * 2
-  const RoleIcon = ROLE_ICON[bot.role]
 
   const rootG = useRef<THREE.Group>(null)
   const scaleG = useRef<THREE.Group>(null)
@@ -225,7 +228,8 @@ export const BotAvatar = memo(function BotAvatar({
     const dt = Math.min(rawDelta, 0.1)
     const t = clock.elapsedTime
     const status = bot.status
-    const active = status === 'working' || status === 'thinking'
+    const active = status === 'working' || status === 'thinking' || status === 'waiting'
+    const waiting = status === 'waiting'
 
     if (f.fresh) {
       f.fresh = false
@@ -281,7 +285,7 @@ export const BotAvatar = memo(function BotAvatar({
       me.dest = goal
     }
 
-    // A bot walking in keeps walking even if you select it (the import modal
+    // A bot walking in keeps walking even if you select it (the Add repo dialog
     // does) — otherwise it would freeze behind the wall.
     const halted = selected && !f.entering
     if (halted) {
@@ -416,7 +420,8 @@ export const BotAvatar = memo(function BotAvatar({
     me.entering = f.entering
 
     // --- facing --------------------------------------------------------------
-    if (selected && !moving) {
+    if ((selected || waiting) && !moving) {
+      // Selected, or waiting for your OK: look at you.
       faceYaw = Math.atan2(camera.position.x - f.pos.x, camera.position.z - f.pos.z)
     } else if (!moving && (partner || f.waitFor)) {
       const o = partner ?? w.agents[f.waitFor]
@@ -432,6 +437,7 @@ export const BotAvatar = memo(function BotAvatar({
     let pose: Pose = 'stand'
     if (t < f.celebrateUntil && !reducedMotion) pose = 'cheer'
     else if (moving) pose = 'walk'
+    else if (waiting) pose = 'raise' // hand up: needs your Allow / Deny
     else if (selected) pose = t < f.waveUntil && !reducedMotion ? 'wave' : 'stand'
     else if (partner) {
       const myTurn = Math.floor(t / 1.7) % 2 === (bot.id < (me.talkWith ?? '') ? 0 : 1)
@@ -533,6 +539,10 @@ export const BotAvatar = memo(function BotAvatar({
         case 'wave':
           oRz = Math.sin(t * 13) * 0.35
           break
+        case 'raise':
+          oRz = Math.sin(t * 6) * 0.12
+          hop = Math.max(0, Math.sin(t * 3)) * 0.05
+          break
         case 'cheer':
           oLz = Math.sin(t * 10) * 0.2
           oRz = -Math.sin(t * 10) * 0.2
@@ -608,8 +618,16 @@ export const BotAvatar = memo(function BotAvatar({
     }
     if (ring.current) {
       const mat = ring.current.material as THREE.MeshBasicMaterial
-      mat.opacity = selected ? 0.6 : active ? 0.34 : 0.22
-      ring.current.scale.setScalar(selected ? 1.14 : 1)
+      if (waiting) {
+        // Pulsing amber ring: this bot is waiting on you.
+        mat.color.copy(ATTENTION)
+        mat.opacity = reducedMotion ? 0.75 : 0.5 + Math.sin(t * 5) * 0.3
+        ring.current.scale.setScalar(reducedMotion ? 1.2 : 1.15 + Math.sin(t * 5) * 0.08)
+      } else {
+        mat.color.set(bot.accent)
+        mat.opacity = selected ? 0.6 : active ? 0.34 : 0.22
+        ring.current.scale.setScalar(selected ? 1.14 : 1)
+      }
     }
     if (scaleG.current) {
       const s = hovered || selected ? 1.09 : 1
@@ -772,7 +790,7 @@ export const BotAvatar = memo(function BotAvatar({
             {/* The open panel already shows the status — don't repeat it. */}
             {!selected && <StatusPill status={bot.status} floating />}
             <span className="bot-badge__name">
-              <RoleIcon className="bot-badge__role" size={12} strokeWidth={2.6} />
+              <FolderGit2 className="bot-badge__role" size={12} strokeWidth={2.6} />
               {bot.name}
             </span>
           </button>

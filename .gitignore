@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Repo agents: your machine-specific config + session state
+lounge.agents.json
+server/.agents-state.json

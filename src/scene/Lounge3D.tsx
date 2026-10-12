@@ -15,7 +15,7 @@ import { Whiteboard } from './Decor'
 import { useDayLight } from './timeOfDay'
 import { createWorld } from './world'
 
-// Memoized: chat/activity/artifact updates change the lounge state many times a
+// Memoized: chat/activity/change updates change the lounge state many times a
 // second while a reply streams. Without this the whole 3D tree re-renders on
 // every delta, which makes typing feel sticky.
 export const Lounge3D = memo(function Lounge3D({
@@ -96,7 +96,7 @@ export const Lounge3D = memo(function Lounge3D({
 // Flip on cast+receive shadows for every solid mesh in the scene (furniture,
 // bots, floor, rugs). Skips transparent meshes — the grid, neon glow decals and
 // bot rings — so they don't stamp hard rectangular shadows. Re-runs when the
-// roster changes so imported bots get grounded too.
+// roster changes so newly added bots get grounded too.
 function SceneShadows({ dep }: { dep: number }) {
   const scene = useThree((s) => s.scene)
   useLayoutEffect(() => {

@@ -200,6 +200,7 @@ class LoungeAudio {
   // --- sound effects -------------------------------------------------------------
   private onCue(c: Cue) {
     if (c.type === 'celebrate') this.chime()
+    else if (c.type === 'attention') this.ping()
     else if (c.type === 'say') this.blip()
   }
 
@@ -221,6 +222,28 @@ class LoungeAudio {
       o.start(t)
       o.stop(t + 1.4)
     })
+  }
+
+  // Three quick rising notes — a repo agent needs your Allow / Deny.
+  private ping() {
+    const ctx = this.ctx
+    if (!ctx || !this.enabled) return
+    const now = ctx.currentTime
+    ;[659.25, 880.0, 1174.66].forEach((f, i) => {
+      const o = ctx.createOscillator()
+      o.type = 'triangle'
+      o.frequency.value = f
+      const g = ctx.createGain()
+      const t = now + i * 0.09
+      g.gain.setValueAtTime(0, t)
+      g.gain.linearRampToValueAtTime(0.08, t + 0.01)
+      g.gain.exponentialRampToValueAtTime(0.0008, t + 0.35)
+      o.connect(g)
+      g.connect(this.sfx!)
+      o.start(t)
+      o.stop(t + 0.4)
+    })
+    this.lastBlip = now // don't stack a speech blip on top
   }
 
   private blip() {

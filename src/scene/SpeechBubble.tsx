@@ -6,8 +6,11 @@ const MAX = 92
 // Plain-text, single-thought version of a chat message for a bubble: strip
 // light markdown, keep the first ~90 characters.
 function clip(text: string): string {
+  // Drop markdown emphasis/code marks and heading/quote markers, but keep
+  // single underscores (file names like LOUNGE_TEST.md).
   const t = text
-    .replace(/[*_`#>]+/g, '')
+    .replace(/\*\*|__|`/g, '')
+    .replace(/(^|\n)\s*[#>]+\s*/g, '$1')
     .replace(/\s+/g, ' ')
     .trim()
   if (t.length <= MAX) return t
@@ -47,19 +50,19 @@ export function SpeechBubble({ botId }: { botId: string }) {
   return (
     <div
       key={s.id}
-      className="bubble"
+      className="speech"
       data-typing={s.typing || undefined}
       data-leaving={phase === 'leaving' || undefined}
       aria-hidden
     >
       {s.typing ? (
-        <span className="bubble__dots">
+        <span className="speech__dots">
           <i />
           <i />
           <i />
         </span>
       ) : (
-        text
+        <span className="speech__text">{text}</span>
       )}
     </div>
   )

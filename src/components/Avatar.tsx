@@ -7,7 +7,7 @@ export function Avatar({
   size = 48,
   selected = false,
 }: {
-  bot: Pick<Bot, 'accent' | 'role' | 'name'>
+  bot: Pick<Bot, 'accent' | 'name'>
   size?: number
   selected?: boolean
 }) {

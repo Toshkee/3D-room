@@ -1,0 +1,14 @@
+{
+  "agents": [
+    {
+      "id": "oblun",
+      "name": "Oblun",
+      "path": "~/Oblun",
+      "accent": "#ff7a45",
+      "blurb": "Works in the Oblun repo (Next.js site).",
+      "model": "sonnet",
+      "effort": "medium",
+      "autoEdits": false
+    }
+  ]
+}

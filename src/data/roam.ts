@@ -178,12 +178,13 @@ const PREFS: Record<Status, Partial<Record<NodeKind, number>>> = {
   thinking: { mingle: 3, shelf: 3, board: 4 },
   idle: { arcade: 3, lounge: 3, pool: 2, vend: 1.2, shelf: 1, mingle: 1 },
   done: { lounge: 2, mingle: 2, arcade: 1 },
+  waiting: {},
 }
 
 /** Does dwelling at `id` fit what a bot with this status should be doing? */
 export function suits(id: string, status: Status): boolean {
   const n = node(id)
-  if (status === 'done') return true
+  if (status === 'done' || status === 'waiting') return true
   if (status === 'working') return n.kind === 'desk' || (n.kind === 'lounge' && n.sit != null)
   return (PREFS[status][n.kind] ?? 0) > 0
 }
@@ -233,6 +234,7 @@ export function dwellFor(id: string, status: Status): number {
   const n = node(id)
   const r = (a: number, b: number) => a + Math.random() * (b - a)
   if (status === 'working' && suits(id, 'working')) return Infinity
+  if (status === 'waiting') return Infinity // stays put, hand up, until you answer
   if (status === 'thinking') {
     if (n.kind === 'board') return r(5, 9)
     if (n.kind === 'shelf') return r(4, 7)
@@ -271,7 +273,7 @@ export function nearestNode(x: number, z: number): string {
 
 export const ROAM = {
   /** Walk speed (units/sec) by status — thinking bots pace slowly. */
-  WALK: { working: 1.75, thinking: 0.85, idle: 1.35, done: 1.5 } as Record<Status, number>,
+  WALK: { working: 1.75, thinking: 0.85, idle: 1.35, done: 1.5, waiting: 1.5 } as Record<Status, number>,
   ARRIVE: 0.12, // distance to consider a waypoint reached
   BODY_SEP: 0.9, // min distance between bots (soft)
   /** How close a visitor stops to the bot it walked over to talk to. */
