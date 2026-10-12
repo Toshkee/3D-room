@@ -5,6 +5,7 @@
   "type": "module",
   "description": "AI Lounge — a cozy isometric room where your AI bots hang out, work, and talk.",
   "scripts": {
+    "start": "vite build --logLevel warn && node server/index.mjs --open",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
@@ -19,6 +20,8 @@
     "postprocessing": "^6.39.2",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "three": "^0.185.0"
   },
   "devDependencies": {

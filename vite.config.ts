@@ -7,14 +7,15 @@ export default defineConfig({
   base: './',
   plugins: [react()],
   server: {
-    // The Claude proxy (server/index.mjs) holds the API key; the frontend only
-    // ever talks to /api/* on its own origin.
+    // `npm run dev` only: the lounge server (server/index.mjs) runs the repo
+    // agents; the app talks to it through /api/* on its own origin.
     proxy: { '/api': 'http://127.0.0.1:8787' },
   },
   build: {
     // Three.js is inherently large (~370 kB gzip) and the whole scene is needed
-    // on first paint, so route-level code-splitting wouldn't help. Raise the
-    // warning threshold rather than chase a split that doesn't reduce the load.
-    chunkSizeWarningLimit: 1500,
+    // on first paint, so route-level code-splitting wouldn't help — and the app
+    // is served from this Mac, so bundle size costs nothing over the network.
+    // Raise the warning threshold rather than chase a split that doesn't help.
+    chunkSizeWarningLimit: 2500,
   },
 })

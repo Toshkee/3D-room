@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AgentRun, Bot, Change, PermissionRequest } from '../types'
+import type { ActivityLine, AgentRun, Bot, Change, PermissionRequest } from '../types'
 import { useLounge } from '../state/LoungeContext'
 import { Avatar } from './Avatar'
 import { StatusPill } from './StatusPill'
 import { ActivityFeed } from './ActivityFeed'
 import { ChatThread } from './ChatThread'
-import { ChevronDown, CircleStop, FileDiff, FolderGit2, Hand, RefreshCw, Settings2, Trash2, X } from './icons'
-import { ChangedFiles, DiffModal } from './DiffModal'
+import { ChevronDown, ChevronRight, CircleStop, FolderGit2, Hand, RefreshCw, Settings2, Trash2, X } from './icons'
+import { DiffModal, LineCounts, changeTotals } from './DiffModal'
 import { EFFORTS, MODELS } from '../engine/RepoAgentLink'
 import { fmtAgo, fmtTime } from '../util'
 
@@ -34,6 +34,8 @@ export function BotPanel() {
   } = useLounge()
   const ref = useRef<HTMLDivElement>(null)
   const bot = bots.find((b) => b.id === selectedId) ?? null
+  // The run whose diff is open (from the Changes tab or a chat reply).
+  const [viewing, setViewing] = useState<Change | null>(null)
 
   // Focus the panel only when it OPENS (or switches bot). Depending on the bot
   // object itself would re-run on every status tick and yank focus out of
@@ -41,6 +43,7 @@ export function BotPanel() {
   const botId = bot?.id ?? null
   useEffect(() => {
     if (botId) ref.current?.focus()
+    setViewing(null)
   }, [botId])
 
   useEffect(() => {
@@ -122,26 +125,7 @@ export function BotPanel() {
         />
       </div>
 
-      {done.length > 0 && (
-        <section className="panel__section panel__section--changes">
-          <h3 className="panel__h">
-            <FileDiff size={13} strokeWidth={2.4} /> Changes ({done.length})
-          </h3>
-          <div className="changes">
-            {done
-              .slice()
-              .reverse()
-              .map((c) => (
-                <ChangeCard key={c.id} change={c} />
-              ))}
-          </div>
-        </section>
-      )}
-
-      <section className="panel__section panel__section--feed">
-        <h3 className="panel__h">Activity feed</h3>
-        <ActivityFeed lines={lines} reducedMotion={reducedMotion} />
-      </section>
+      <WorkSection key={bot.id} lines={lines} changes={done} reducedMotion={reducedMotion} onView={setViewing} />
 
       <section className="panel__section panel__section--chat">
         <h3 className="panel__h">Chat with {bot.name}</h3>
@@ -154,8 +138,11 @@ export function BotPanel() {
           placeholder={`Ask ${bot.name} to do something${repoHint}…`}
           suggestions={STARTERS}
           blocked={blocked}
+          changes={done}
+          onViewChange={setViewing}
         />
       </section>
+      {viewing && <DiffModal change={viewing} onClose={() => setViewing(null)} />}
     </aside>
   )
 }
@@ -194,14 +181,19 @@ function PermissionCard({
           Allow
         </button>
       </div>
-      {more > 0 && <p className="permit__more">{more} more step{more > 1 ? 's' : ''} waiting after this one</p>}
+      {more > 0 && (
+        <p className="permit__more">
+          {more} more step{more > 1 ? 's' : ''} waiting after this one
+        </p>
+      )}
     </section>
   )
 }
 
-// Model / effort, auto-approve edits, stop, fresh session, remove. Folded into
-// one row by default (the settings rarely change, the chat below needs the
-// room); the chip shows the current model · effort and opens the rest.
+// Model / effort, auto-approve edits, stop, fresh session, remove. The
+// settings fold into one chip (they rarely change, the chat below needs the
+// room) that shows the current model · effort and opens the rest. Remove is a
+// trash button that asks once before it acts.
 function AgentControls({
   bot,
   run,
@@ -223,10 +215,15 @@ function AgentControls({
   const [open, setOpen] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [removeError, setRemoveError] = useState('')
+  const cancelRef = useRef<HTMLButtonElement>(null)
   const remove = async () => {
     const err = await onRemove()
     if (err) setRemoveError(err)
   }
+  // Land on the safe choice when the question opens.
+  useEffect(() => {
+    if (confirming) cancelRef.current?.focus()
+  }, [confirming])
   const settingsId = `agent-settings-${bot.id}`
   return (
     <div className="agentbar">
@@ -257,7 +254,39 @@ function AgentControls({
             <RefreshCw size={13} strokeWidth={2.4} /> New session
           </button>
         )}
+        <button
+          type="button"
+          className="agentbar__icon"
+          aria-label={`Remove ${bot.name} from the lounge`}
+          aria-expanded={confirming}
+          title={busy ? 'Stop the run first' : 'Remove from the lounge'}
+          disabled={busy}
+          onClick={() => {
+            setRemoveError('')
+            setConfirming((c) => !c)
+          }}
+        >
+          <Trash2 size={15} strokeWidth={2.3} />
+        </button>
       </div>
+      {confirming && !busy && (
+        <div className="agentbar__confirm" role="group" aria-label={`Remove ${bot.name}`}>
+          <span>Remove {bot.name} from the lounge? The repo's files stay as they are.</span>
+          <div className="agentbar__confirm-actions">
+            <button type="button" className="agentbar__btn" ref={cancelRef} onClick={() => setConfirming(false)}>
+              Cancel
+            </button>
+            <button type="button" className="agentbar__btn agentbar__btn--stop" onClick={remove}>
+              <Trash2 size={13} strokeWidth={2.4} /> Remove
+            </button>
+          </div>
+          {removeError && (
+            <p className="form__error" role="alert">
+              {removeError}
+            </p>
+          )}
+        </div>
+      )}
       {run && (
         <p className="agentbar__run" title={run.costUsd != null ? 'Cost at API prices' : undefined}>
           Last run {fmtAgo(run.at)}
@@ -299,70 +328,112 @@ function AgentControls({
             />
             Auto-approve file edits (commands still ask)
           </label>
-          {confirming ? (
-            <div className="agentbar__confirm" role="group" aria-label={`Remove ${bot.name}`}>
-              <span>Remove {bot.name} from the lounge? The repo's files stay as they are.</span>
-              <div className="agentbar__confirm-actions">
-                <button type="button" className="agentbar__btn" onClick={() => setConfirming(false)}>
-                  Cancel
-                </button>
-                <button type="button" className="agentbar__btn agentbar__btn--stop" onClick={remove}>
-                  <Trash2 size={13} strokeWidth={2.4} /> Remove
-                </button>
-              </div>
-              {removeError && (
-                <p className="form__error" role="alert">
-                  {removeError}
-                </p>
-              )}
-            </div>
-          ) : (
-            <button
-              type="button"
-              className="agentbar__link"
-              onClick={() => {
-                setRemoveError('')
-                setConfirming(true)
-              }}
-              disabled={busy}
-              title={busy ? 'Stop the run first' : undefined}
-            >
-              Remove from lounge…
-            </button>
-          )}
         </div>
       )}
     </div>
   )
 }
 
-// One run's changes: its answer and the files it touched; the diff opens in a
-// wide dialog. The body only renders while the card is open — a closed
-// <details> still mounts its children.
-function ChangeCard({ change }: { change: Change }) {
-  const [open, setOpen] = useState(false)
-  const [viewing, setViewing] = useState(false)
-  const n = change.files.length
+type Tab = 'activity' | 'changes'
+
+// What the bot is doing and what it changed, sharing one area so the chat
+// below keeps its room. A dot on "Changes" means a run changed files since you
+// last looked there.
+function WorkSection({
+  lines,
+  changes,
+  reducedMotion,
+  onView,
+}: {
+  lines: ActivityLine[]
+  changes: Change[]
+  reducedMotion: boolean
+  onView: (c: Change) => void
+}) {
+  const [tab, setTab] = useState<Tab>('activity')
+  const latest = changes.length ? changes[changes.length - 1].id : null
+  const [seen, setSeen] = useState(latest)
+  const fresh = tab !== 'changes' && latest != null && latest !== seen
+  const pick = (t: Tab) => {
+    setTab(t)
+    if (t === 'changes') setSeen(latest)
+  }
+  useEffect(() => {
+    if (tab === 'changes') setSeen(latest)
+  }, [tab, latest])
+
+  const tabs: { id: Tab; label: string; count?: number }[] = [
+    { id: 'activity', label: 'Activity' },
+    { id: 'changes', label: 'Changes', count: changes.length },
+  ]
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+    e.preventDefault()
+    const next: Tab = tab === 'activity' ? 'changes' : 'activity'
+    pick(next)
+    document.getElementById(`work-tab-${next}`)?.focus()
+  }
+
   return (
-    <details className="change" onToggle={(e) => setOpen(e.currentTarget.open)}>
-      <summary className="change__head">
-        <span className="change__title">{change.prompt}</span>
-        <span className="change__meta">
-          {n} file{n === 1 ? '' : 's'} · {fmtTime(change.at)}
-        </span>
-      </summary>
-      {open && (
-        <div className="change__body">
-          {change.summary && <p className="change__summary">{change.summary}</p>}
-          <ChangedFiles files={change.files} />
-          {change.diff && (
-            <button type="button" className="change__view" onClick={() => setViewing(true)}>
-              <FileDiff size={13} strokeWidth={2.4} /> View diff
-            </button>
-          )}
-        </div>
-      )}
-      {viewing && <DiffModal change={change} onClose={() => setViewing(false)} />}
-    </details>
+    <section
+      className="panel__section panel__section--work"
+      data-empty={(tab === 'activity' ? !lines.length : !changes.length) || undefined}
+    >
+      <div className="seg" role="tablist" aria-label="Activity and changes" onKeyDown={onKey}>
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            id={`work-tab-${t.id}`}
+            type="button"
+            role="tab"
+            className="seg__tab"
+            aria-selected={tab === t.id}
+            aria-controls={`work-panel-${t.id}`}
+            tabIndex={tab === t.id ? 0 : -1}
+            onClick={() => pick(t.id)}
+          >
+            {t.label}
+            {t.count ? <span className="seg__count">{t.count}</span> : null}
+            {t.id === 'changes' && fresh && <span className="seg__dot" aria-label="new" />}
+          </button>
+        ))}
+      </div>
+      <div className="work__panel" role="tabpanel" id={`work-panel-${tab}`} aria-labelledby={`work-tab-${tab}`}>
+        {tab === 'activity' ? (
+          <ActivityFeed lines={lines} reducedMotion={reducedMotion} />
+        ) : (
+          <ChangeList changes={changes} onView={onView} />
+        )}
+      </div>
+    </section>
+  )
+}
+
+// Every run that changed files, newest first. A row opens that run's diff.
+function ChangeList({ changes, onView }: { changes: Change[]; onView: (c: Change) => void }) {
+  if (!changes.length) {
+    return <p className="feed__empty">When a run changes files, they show up here with the full diff.</p>
+  }
+  return (
+    <ul className="changes">
+      {changes
+        .slice()
+        .reverse()
+        .map((c) => {
+          const n = c.files.length
+          const t = changeTotals(c.files)
+          return (
+            <li key={c.id}>
+              <button type="button" className="change-row" onClick={() => onView(c)}>
+                <span className="change-row__title">{c.prompt}</span>
+                <span className="change-row__meta">
+                  {n} file{n === 1 ? '' : 's'} <LineCounts add={t.add} del={t.del} /> · {fmtTime(c.at)}
+                </span>
+                <ChevronRight size={15} strokeWidth={2.4} className="change-row__chev" />
+              </button>
+            </li>
+          )
+        })}
+    </ul>
   )
 }

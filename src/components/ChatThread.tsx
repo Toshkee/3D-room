@@ -1,14 +1,17 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { Bot, Message } from '../types'
+import type { Bot, Change, Message } from '../types'
 import { Avatar } from './Avatar'
-import { TypeLine } from './TypeLine'
-import { ArrowUp } from './icons'
+import { useTyped } from './TypeLine'
+import { Markdown } from './Markdown'
+import { LineCounts, changeTotals } from './DiffModal'
+import { ArrowUp, FileDiff } from './icons'
 import { fmtTime } from '../util'
 
 // A bot's message list + composer (in the BotPanel). Empty threads offer a
-// few starter prompts so you never face a blank box. The composer grows with
-// what you type (Enter sends, Shift+Enter adds a line); while `blocked` is set
-// it keeps your draft but won't send, and says why.
+// few starter prompts so you never face a blank box. A reply whose run changed
+// files carries a "View diff" chip. The composer grows with what you type
+// (Enter sends, Shift+Enter adds a line); while `blocked` is set it keeps your
+// draft but won't send, and says why.
 export function ChatThread({
   messages,
   bots,
@@ -17,6 +20,8 @@ export function ChatThread({
   placeholder = 'Message…',
   suggestions,
   blocked,
+  changes,
+  onViewChange,
 }: {
   messages: Message[]
   bots: Bot[]
@@ -25,11 +30,15 @@ export function ChatThread({
   placeholder?: string
   suggestions?: string[]
   blocked?: string | null
+  /** Runs that changed files; a reply with the same id gets a diff chip. */
+  changes?: Change[]
+  onViewChange?: (change: Change) => void
 }) {
   const [text, setText] = useState('')
   const listRef = useRef<HTMLDivElement>(null)
   const areaRef = useRef<HTMLTextAreaElement>(null)
   const byId = useMemo(() => new Map(bots.map((b) => [b.id, b])), [bots])
+  const changeById = useMemo(() => new Map((changes ?? []).map((c) => [c.id, c])), [changes])
 
   // Follow both new messages and streamed growth of the newest one.
   const lastLen = messages.length ? messages[messages.length - 1].text.length : 0
@@ -123,27 +132,24 @@ export function ChatThread({
           if (pending && !(last && (bot?.status === 'working' || bot?.status === 'waiting'))) return null
           return (
             <div className="msg" data-mine={mine || undefined} key={m.id}>
-              {!mine &&
-                (bot ? (
-                  <Avatar bot={bot} size={30} />
-                ) : (
-                  <span className="avatar avatar--ghost" aria-hidden />
-                ))}
+              {!mine && (bot ? <Avatar bot={bot} size={30} /> : <span className="avatar avatar--ghost" aria-hidden />)}
               <div className="msg__body">
-                <div
-                  className="bubble"
-                  style={bot ? ({ '--a': bot.accent } as React.CSSProperties) : undefined}
-                >
+                <div className="bubble" style={bot ? ({ '--a': bot.accent } as React.CSSProperties) : undefined}>
                   {pending ? (
                     <span className="bubble__dots" role="img" aria-label={`${bot?.name ?? 'Bot'} is replying`}>
                       <i />
                       <i />
                       <i />
                     </span>
+                  ) : mine ? (
+                    m.text
                   ) : (
-                    <TypeLine text={m.text} animate={animate} />
+                    <Reply text={m.text} animate={animate} />
                   )}
                 </div>
+                {!mine && changeById.has(m.id) && onViewChange && (
+                  <DiffChip change={changeById.get(m.id)!} onView={onViewChange} />
+                )}
                 <span className="msg__time">{fmtTime(m.at)}</span>
               </div>
             </div>
@@ -175,5 +181,31 @@ export function ChatThread({
         </div>
       </form>
     </div>
+  )
+}
+
+function DiffChip({ change, onView }: { change: Change; onView: (c: Change) => void }) {
+  const n = change.files.length
+  const t = changeTotals(change.files)
+  return (
+    <button type="button" className="diff-chip" onClick={() => onView(change)}>
+      <FileDiff size={13} strokeWidth={2.4} />
+      <span>
+        {n} file{n === 1 ? '' : 's'} changed
+      </span>
+      <LineCounts add={t.add} del={t.del} />
+      <span className="diff-chip__go">View diff</span>
+    </button>
+  )
+}
+
+// A bot's answer, formatted, typing itself out when it's the newest one.
+function Reply({ text, animate }: { text: string; animate: boolean }) {
+  const shown = useTyped(text, animate)
+  return (
+    <>
+      <Markdown text={shown} />
+      {animate && shown.length < text.length && <span className="caret" aria-hidden />}
+    </>
   )
 }

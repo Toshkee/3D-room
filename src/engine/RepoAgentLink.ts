@@ -12,10 +12,12 @@ import type {
 // ---------------------------------------------------------------------------
 // The browser side of repo agents (server/agents.mjs). Every bot in the lounge
 // is a repo with a real Claude Code session behind it, and everything it shows
-// comes from those runs, pushed over Server-Sent Events: tool calls become
-// activity lines, the final answer streams into its chat, a permission request
-// turns it into "Needs you", and the files a run changed arrive as a Change.
-// Messages, answers and settings go back over plain JSON POSTs.
+// comes from those runs, pushed over Server-Sent Events: activity lines, the
+// final answer streaming into its chat, a permission request turning it into
+// "Needs you", the files a run changed arriving as a Change. The server keeps
+// that history and sends it with every snapshot, so a reconnect (or a tab
+// opened later) shows the same thing. Messages, answers and settings go back
+// over plain JSON POSTs.
 // ---------------------------------------------------------------------------
 
 export interface AgentInfo {
@@ -40,10 +42,20 @@ export interface RepoSuggestion {
   name: string
 }
 
+/** A bot's chat, feed and changes as the server has them. */
+export interface BotHistory {
+  chat: Message[]
+  activity: ActivityLine[]
+  changes: Change[]
+}
+
 export interface LinkHandlers {
   onConnection(state: Connection): void
   /** The whole roster (`full`, on connect) or just the agents that changed. */
   onRoster(agents: AgentInfo[], full: boolean): void
+  /** Replaces what the page shows for a bot with the server's history. */
+  onHistory(botId: string, history: BotHistory): void
+  onChatCleared(botId: string): void
   onRemoved(botId: string): void
   onStatus(botId: string, patch: { status?: Status; task?: string }): void
   onActivity(line: ActivityLine): void
@@ -51,7 +63,8 @@ export interface LinkHandlers {
   onChat(botId: string, message: Message): void
   onChanges(change: Change): void
   onPermission(botId: string, pending: PermissionRequest[]): void
-  onRun(botId: string, run: AgentRun): void
+  /** `live`: this run just finished (not a stat replayed on connect). */
+  onRun(botId: string, run: AgentRun, live: boolean): void
 }
 
 export const MODELS = ['haiku', 'sonnet', 'opus', 'fable'] as const
@@ -65,19 +78,32 @@ const RETRY_MS = 3000
 /** The server pings every 5 s; this long without a word means it's gone. */
 const SILENCE_MS = 15_000
 
-let seq = 0
-const uid = (p: string) => `${p}-${Date.now().toString(36)}-${++seq}`
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
+
+interface ServerMessage {
+  id: string
+  role: 'user' | 'bot'
+  text: string
+  at: number
+  streaming?: boolean
+}
+interface ServerHistory {
+  chat: ServerMessage[]
+  activity: { id: string; text: string; kind: ActivityLine['kind']; at: number }[]
+  changes: Omit<Change, 'botId'>[]
+}
 
 type ServerEvent =
   | { type: 'ping' }
-  | { type: 'snapshot'; agents: AgentInfo[] }
+  | { type: 'snapshot'; agents: AgentInfo[]; history?: Record<string, ServerHistory> }
   | { type: 'agent'; agent: AgentInfo }
   | { type: 'removed'; agentId: string }
+  | { type: 'chat-cleared'; agentId: string }
+  | { type: 'user-message'; agentId: string; message: ServerMessage }
   | { type: 'status'; agentId: string; status: Status }
   | { type: 'run-start'; agentId: string; runId: string; prompt: string }
-  | { type: 'reply'; agentId: string; id: string; text: string }
-  | { type: 'activity'; agentId: string; text: string; kind: ActivityLine['kind'] }
+  | { type: 'reply'; agentId: string; id: string; text: string; at?: number }
+  | { type: 'activity'; agentId: string; id: string; text: string; kind: ActivityLine['kind']; at: number }
   | { type: 'permission'; agentId: string; request: PermissionRequest }
   | { type: 'permission-resolved'; agentId: string; requestId: string; allow: boolean }
   | {
@@ -91,6 +117,7 @@ type ServerEvent =
       lastRun: AgentRun
       files: ChangedFile[]
       diff: string
+      at?: number
     }
 
 export class RepoAgentLink {
@@ -101,7 +128,6 @@ export class RepoAgentLink {
   private lastHeard = 0
   private live = false
   private pending = new Map<string, PermissionRequest[]>()
-  private replyAt = new Map<string, number>()
 
   constructor(handlers: LinkHandlers) {
     this.h = handlers
@@ -160,7 +186,12 @@ export class RepoAgentLink {
     this.retry = setTimeout(() => this.connect(), RETRY_MS)
   }
 
-  async send(botId: string, text: string, opts: { model?: string; effort?: string } = {}): Promise<string | null> {
+  /** `id` is the id the page already shows the message under. */
+  async send(
+    botId: string,
+    text: string,
+    opts: { id?: string; model?: string; effort?: string } = {},
+  ): Promise<string | null> {
     return this.post(botId, 'message', { text, ...opts })
   }
 
@@ -237,7 +268,7 @@ export class RepoAgentLink {
       const botId = agentBotId(a.id)
       this.pending.set(botId, a.pending ?? [])
       this.h.onPermission(botId, a.pending ?? [])
-      if (a.lastRun) this.h.onRun(botId, a.lastRun)
+      if (a.lastRun) this.h.onRun(botId, a.lastRun, false)
     }
   }
 
@@ -248,32 +279,42 @@ export class RepoAgentLink {
       case 'snapshot':
         this.h.onConnection('online')
         this.applyRoster(e.agents, true)
+        for (const [agentId, h] of Object.entries(e.history ?? {})) {
+          const botId = agentBotId(agentId)
+          this.h.onHistory(botId, {
+            chat: h.chat.map((m) => toMessage(botId, m)),
+            activity: h.activity.map((l) => ({ ...l, botId })),
+            changes: h.changes.map((c) => ({ ...c, botId })),
+          })
+        }
         return
       case 'agent':
         this.applyRoster([e.agent], false)
         return
     }
     const botId = agentBotId(e.agentId)
-    const now = Date.now()
     switch (e.type) {
       case 'removed':
         this.pending.delete(botId)
         this.h.onRemoved(botId)
+        break
+      case 'chat-cleared':
+        this.h.onChatCleared(botId)
+        break
+      case 'user-message':
+        this.h.onChat(botId, toMessage(botId, e.message))
         break
       case 'status':
         this.h.onStatus(botId, { status: e.status })
         break
       case 'run-start':
         this.h.onStatus(botId, { status: 'working', task: clip(e.prompt, 70) })
-        this.h.onActivity({ id: uid('act'), botId, text: `Started: ${clip(e.prompt, 90)}`, kind: 'info', at: now })
         break
-      case 'reply': {
-        if (!this.replyAt.has(e.id)) this.replyAt.set(e.id, now)
-        this.h.onChat(botId, { id: e.id, from: botId, text: e.text, at: this.replyAt.get(e.id)!, streaming: true })
+      case 'reply':
+        this.h.onChat(botId, { id: e.id, from: botId, text: e.text, at: e.at ?? Date.now(), streaming: true })
         break
-      }
       case 'activity':
-        this.h.onActivity({ id: uid('act'), botId, text: e.text, kind: e.kind, at: now })
+        this.h.onActivity({ id: e.id, botId, text: e.text, kind: e.kind, at: e.at })
         break
       case 'permission': {
         const list = [...(this.pending.get(botId) ?? []).filter((r) => r.requestId !== e.request.requestId), e.request]
@@ -285,28 +326,22 @@ export class RepoAgentLink {
         const list = (this.pending.get(botId) ?? []).filter((r) => r.requestId !== e.requestId)
         this.pending.set(botId, list)
         this.h.onPermission(botId, list)
-        this.h.onActivity({
-          id: uid('act'),
-          botId,
-          text: e.allow ? 'You allowed the step' : 'You denied the step',
-          kind: e.allow ? 'result' : 'thought',
-          at: now,
-        })
         break
       }
       case 'result': {
-        this.h.onRun(botId, e.lastRun)
+        // The reply and the feed lines arrived as their own events.
+        this.h.onRun(botId, e.lastRun, true)
         const files = e.files ?? []
-        if (e.ok) {
-          this.h.onActivity({ id: uid('act'), botId, text: summaryLine(e.lastRun), kind: 'result', at: now })
-        } else {
-          this.h.onActivity({ id: uid('act'), botId, text: `Run ended: ${clip(e.error ?? 'error', 120)}`, kind: 'thought', at: now })
-          if (!e.text) {
-            this.h.onChat(botId, { id: e.runId, from: botId, text: `(Run ended: ${e.error ?? 'error'})`, at: now })
-          }
-        }
         if (files.length) {
-          this.h.onChanges({ id: e.runId, botId, prompt: e.prompt, summary: e.text, files, diff: e.diff, at: now })
+          this.h.onChanges({
+            id: e.runId,
+            botId,
+            prompt: e.prompt,
+            summary: e.text,
+            files,
+            diff: e.diff,
+            at: e.at ?? Date.now(),
+          })
         }
         break
       }
@@ -314,13 +349,10 @@ export class RepoAgentLink {
   }
 }
 
-function summaryLine(run: AgentRun): string {
-  const files = run.files ?? 0
-  const parts = [
-    run.turns != null ? `${run.turns} turns` : '',
-    `${Math.max(1, Math.round(run.durationMs / 1000))} s`,
-    run.costUsd != null ? `$${run.costUsd.toFixed(2)}` : '',
-    files ? `${files} file${files > 1 ? 's' : ''} changed` : 'no file changes',
-  ].filter(Boolean)
-  return `Finished · ${parts.join(' · ')}`
-}
+const toMessage = (botId: string, m: ServerMessage): Message => ({
+  id: m.id,
+  from: m.role === 'user' ? 'user' : botId,
+  text: m.text,
+  at: m.at,
+  ...(m.streaming ? { streaming: true } : {}),
+})

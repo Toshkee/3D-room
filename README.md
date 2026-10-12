@@ -12,9 +12,15 @@ small local Node server that runs Claude Code headless in your repos.
 ## Features
 
 - **Lounge**: the isometric 3D room; click a bot to open it.
-- **Bot panel**: chat with the bot, a live **activity feed** of every tool call,
-  **Allow / Deny** for edits and commands, model + effort per bot, and
-  **Changes**: the files each run touched, with the diff.
+- **Bot panel**: chat with the bot (formatted answers: code, lists, tables), a
+  live **activity feed** of every tool call, **Allow / Deny** for edits and
+  commands, model + effort per bot, and **Changes**: the files each run
+  touched, with the diff.
+- **History on the server**: chats, feed and changes are kept by the lounge
+  server (`server/.agents-history.json`), so closing the tab mid-run loses
+  nothing.
+- **Notifications** (bell in the top bar): a system notification when a bot
+  needs your OK or finishes while the lounge is in the background.
 - **Dashboard**: every repo at a glance, with who needs you, who's working, and
   what the last run changed.
 - **Add repo**: pick a project folder (git repos under `~` are suggested) and
@@ -27,8 +33,7 @@ You need [Claude Code](https://code.claude.com) installed and logged in.
 
 ```bash
 npm install
-npm run server     # the lounge server, http://127.0.0.1:8787 (one terminal)
-npm run dev        # the app, http://localhost:5173 (another terminal)
+npm start          # builds the app, serves it at http://127.0.0.1:8787 and opens it
 ```
 
 Then press **Add repo**. Repos live in `lounge.agents.json` (gitignored; see
@@ -39,6 +44,8 @@ commands.
 ## Develop
 
 ```bash
+npm run server     # the lounge server alone, http://127.0.0.1:8787
+npm run dev        # the app with hot reload, http://localhost:5173 (proxies /api)
 npm run build      # type-check + production build to dist/
 npm run typecheck  # type-check only
 ```

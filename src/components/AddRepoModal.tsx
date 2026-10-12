@@ -23,6 +23,9 @@ export function AddRepoModal({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const pathRef = useRef<HTMLInputElement>(null)
+  const picksRef = useRef<HTMLDivElement>(null)
+  // More suggestions below the fold → fade the bottom edge as a hint.
+  const [more, setMore] = useState(false)
   const offline = connection === 'offline'
 
   // Focus the first field once, on open only (see the focus-steal note in
@@ -38,6 +41,12 @@ export function AddRepoModal({ onClose }: { onClose: () => void }) {
       live = false
     }
   }, [suggestRepos, connection])
+
+  const checkMore = () => {
+    const el = picksRef.current
+    setMore(!!el && el.scrollHeight - el.scrollTop - el.clientHeight > 4)
+  }
+  useEffect(checkMore, [suggestions])
 
   const closeRef = useRef(onClose)
   closeRef.current = onClose
@@ -112,7 +121,7 @@ export function AddRepoModal({ onClose }: { onClose: () => void }) {
           {suggestions && suggestions.length > 0 && (
             <div className="field">
               <span>Found on this Mac</span>
-              <div className="repo-picks">
+              <div className="repo-picks" ref={picksRef} onScroll={checkMore} data-more={more || undefined}>
                 {suggestions.map((s) => (
                   <button
                     type="button"

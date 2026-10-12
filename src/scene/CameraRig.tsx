@@ -23,8 +23,11 @@ type Ctl = {
 
 // Cinematic camera: a crane-in intro on load, then OrbitControls with two
 // behaviors layered on — "fly to" and track the selected bot as it roams, and a
-// gentle idle auto-orbit when you're not touching it. Under reduced motion the
-// intro + auto-orbit are skipped (it starts settled).
+// gentle idle auto-orbit when you're not touching it. On a portrait screen the
+// whole room is a sliver, so with nothing selected it frames the bots instead.
+// Your own zoom is left alone until you've stopped touching the camera for a
+// while (or pick another bot). Under reduced motion the intro + auto-orbit are
+// skipped (it starts settled).
 export function CameraRig({
   selectedId,
   positions,
@@ -36,6 +39,7 @@ export function CameraRig({
 }) {
   const { size } = useThree()
   const homeZoom = clamp(Math.min(size.width, size.height * 1.4) / 18, 16, 120)
+  const portrait = size.width / size.height < 0.8
   const [introDone, setIntroDone] = useState(reducedMotion)
 
   if (!introDone) {
@@ -58,7 +62,13 @@ export function CameraRig({
         minAzimuthAngle={AZ_MIN}
         maxAzimuthAngle={AZ_MAX}
       />
-      <Director selectedId={selectedId} positions={positions} reducedMotion={reducedMotion} homeZoom={homeZoom} />
+      <Director
+        selectedId={selectedId}
+        positions={positions}
+        reducedMotion={reducedMotion}
+        homeZoom={homeZoom}
+        portrait={portrait}
+      />
     </>
   )
 }
@@ -105,23 +115,38 @@ function IntroCam({ homeZoom, onDone }: { homeZoom: number; onDone: () => void }
   return null
 }
 
+/** Seconds after you last touched the camera before it re-frames on its own. */
+const HANDS_OFF = 8
+/** Screen-pixel margins kept around framed bots (name tags sit above them). */
+const FRAME_X = 56
+const FRAME_TOP = 120
+const FRAME_BOTTOM = 70
+
 function Director({
   selectedId,
   positions,
   reducedMotion,
   homeZoom,
+  portrait,
 }: {
   selectedId: string | null
   positions: { current: Record<string, THREE.Vector3> }
   reducedMotion: boolean
   homeZoom: number
+  portrait: boolean
 }) {
-  const { camera, invalidate } = useThree()
+  const { camera, invalidate, size } = useThree()
   const controls = useThree((s) => s.controls) as unknown as Ctl | null
   const lastInteract = useRef(0)
+  const userAt = useRef(-Infinity)
+  const flyUntil = useRef(0)
+  const prevSel = useRef<string | null>(null)
   const bump = useRef(false)
   const swing = useRef(1)
   const focus = useMemo(() => new THREE.Vector3(), [])
+  const right = useMemo(() => new THREE.Vector3(), [])
+  const up = useMemo(() => new THREE.Vector3(), [])
+  const d = useMemo(() => new THREE.Vector3(), [])
 
   useEffect(() => {
     if (!controls) return
@@ -137,10 +162,17 @@ function Director({
     const now = clock.elapsedTime
     if (bump.current) {
       lastInteract.current = now
+      userAt.current = now
       bump.current = false
+    }
+    if (selectedId !== prevSel.current) {
+      // Picking (or dropping) a bot is a deliberate camera move.
+      prevSel.current = selectedId
+      flyUntil.current = now + 2.5
     }
     const cam = camera as THREE.OrthographicCamera
     const sel = selectedId ? positions.current[selectedId] : undefined
+    const bots = Object.values(positions.current)
 
     let desiredZoom = homeZoom
     if (sel) {
@@ -150,7 +182,26 @@ function Director({
       controls.autoRotate = false
       lastInteract.current = now
     } else {
-      controls.target.lerp(HOME, 0.06)
+      if (portrait && bots.length) {
+        // Center on the bots and zoom so all of them (and their tags) fit.
+        focus.set(0, 1.0, 0)
+        for (const p of bots) focus.add(d.set(p.x / bots.length, 0, p.z / bots.length))
+        controls.target.lerp(focus, 0.04)
+        right.setFromMatrixColumn(cam.matrixWorld, 0)
+        up.setFromMatrixColumn(cam.matrixWorld, 1)
+        let fit = homeZoom * 2.2
+        for (const p of bots) {
+          d.set(p.x, 0, p.z).sub(controls.target)
+          const x = Math.abs(d.dot(right))
+          const y = d.dot(up)
+          if (x > 0.01) fit = Math.min(fit, (size.width / 2 - FRAME_X) / x)
+          if (y > 0.01) fit = Math.min(fit, (size.height / 2 - FRAME_TOP) / y)
+          else if (y < -0.01) fit = Math.min(fit, (size.height / 2 - FRAME_BOTTOM) / -y)
+        }
+        desiredZoom = clamp(fit, 16, 150)
+      } else {
+        controls.target.lerp(HOME, 0.06)
+      }
       const idle = now - lastInteract.current > 5
       controls.autoRotate = !reducedMotion && idle
       // Ping-pong between the azimuth limits instead of orbiting all the way.
@@ -160,8 +211,12 @@ function Director({
       controls.autoRotateSpeed = 0.45 * swing.current
     }
 
-    cam.zoom = lerp(cam.zoom, desiredZoom, 0.05)
-    cam.updateProjectionMatrix()
+    // Don't fight a zoom you just made: re-frame only on a fly-to or once
+    // you've left the camera alone for a while.
+    if (now < flyUntil.current || now - userAt.current > HANDS_OFF) {
+      cam.zoom = lerp(cam.zoom, desiredZoom, 0.05)
+      cam.updateProjectionMatrix()
+    }
     invalidate()
   })
 

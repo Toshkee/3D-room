@@ -26,3 +26,4 @@ dist-ssr
 # Repo agents: your machine-specific config + session state
 lounge.agents.json
 server/.agents-state.json
+server/.agents-history.json

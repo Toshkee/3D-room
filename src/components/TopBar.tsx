@@ -1,7 +1,7 @@
 import { useLounge } from '../state/LoungeContext'
 import type { View } from '../types'
 import { RobotFace } from './RobotFace'
-import { FolderPlus, Gamepad2, LayoutGrid, Moon, Sun, Volume2, VolumeX } from './icons'
+import { Bell, BellOff, FolderPlus, Gamepad2, LayoutGrid, Moon, Sun, Volume2, VolumeX } from './icons'
 
 const TABS: { id: View; label: string; Icon: typeof Gamepad2 }[] = [
   { id: 'lounge', label: 'Lounge', Icon: Gamepad2 },
@@ -9,7 +9,19 @@ const TABS: { id: View; label: string; Icon: typeof Gamepad2 }[] = [
 ]
 
 export function TopBar({ onAddRepo }: { onAddRepo: () => void }) {
-  const { view, setView, theme, toggleTheme, sound, toggleSound, bots, connection, permissions } = useLounge()
+  const {
+    view,
+    setView,
+    theme,
+    toggleTheme,
+    sound,
+    toggleSound,
+    notifications,
+    toggleNotifications,
+    bots,
+    connection,
+    permissions,
+  } = useLounge()
   const waiting = Object.values(permissions).filter((l) => l.length).length
   const repos = `${bots.length} repo${bots.length === 1 ? '' : 's'}`
   const sub =
@@ -49,6 +61,24 @@ export function TopBar({ onAddRepo }: { onAddRepo: () => void }) {
       </nav>
 
       <div className="topbar__actions">
+        {notifications !== 'unsupported' && (
+          <button
+            className="icon-btn icon-btn--ghost topbar__notify"
+            onClick={toggleNotifications}
+            aria-pressed={notifications === 'on'}
+            aria-label={notifications === 'on' ? 'Turn notifications off' : 'Turn notifications on'}
+            title={
+              notifications === 'on'
+                ? 'Notifications on: you hear from bots when the lounge is in the background'
+                : notifications === 'blocked'
+                  ? 'Notifications are blocked for this site — allow them in the browser settings'
+                  : 'Notify me when a bot needs me or finishes'
+            }
+            data-on={notifications === 'on' || undefined}
+          >
+            {notifications === 'on' ? <Bell size={18} /> : <BellOff size={18} />}
+          </button>
+        )}
         <button
           className="icon-btn icon-btn--ghost"
           onClick={toggleSound}

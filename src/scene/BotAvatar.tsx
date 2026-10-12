@@ -394,7 +394,8 @@ export const BotAvatar = memo(function BotAvatar({
     const sitting = !selected && dwelling && dn.sit != null && !moving
 
     // Soft separation so bodies don't interpenetrate. Seated / talking bots
-    // stay put; walkers step around them. The selected bot never yields.
+    // stay put; walkers step around them. The selected bot never yields, so
+    // everyone else steps aside for it.
     const anchored = dwelling && (sitting || !!partner)
     if (!selected && !anchored) {
       for (const [oid, op] of Object.entries(w.positions)) {
@@ -403,7 +404,7 @@ export const BotAvatar = memo(function BotAvatar({
         const dx = f.pos.x - op.x
         const dz = f.pos.z - op.z
         const d = Math.hypot(dx, dz)
-        if (d > 0.001 && d < ROAM.BODY_SEP && (bot.id > oid || other?.anchored)) {
+        if (d > 0.001 && d < ROAM.BODY_SEP && (bot.id > oid || other?.anchored || other?.selected)) {
           const push = (ROAM.BODY_SEP - d) * 0.5
           f.pos.x += (dx / d) * push
           f.pos.z += (dz / d) * push
@@ -787,8 +788,9 @@ export const BotAvatar = memo(function BotAvatar({
             style={{ '--a': bot.accent } as React.CSSProperties}
             onClick={() => onSelect(bot.id)}
           >
-            {/* The open panel already shows the status — don't repeat it. */}
-            {!selected && <StatusPill status={bot.status} floating />}
+            {/* Only statuses worth a glance float over the bot (idle is the
+                default, and the open panel already shows the status). */}
+            {!selected && bot.status !== 'idle' && <StatusPill status={bot.status} floating />}
             <span className="bot-badge__name">
               <FolderGit2 className="bot-badge__role" size={12} strokeWidth={2.6} />
               {bot.name}

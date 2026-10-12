@@ -25,6 +25,10 @@
 //   POST /api/agents/:id/settings        { model?, effort?, autoEdits? }
 //   POST /api/agents/:id/reset           (forget the session → fresh context)
 //   POST /api/hooks/pretool?agent=&token= (called by Claude Code, not the UI)
+//
+// What the lounge shows per repo — chat, activity feed, changed files — is
+// kept here too (server/.agents-history.json) and sent with every snapshot, so
+// nothing is lost when the browser tab is closed mid-run.
 import { spawn, execFile } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
@@ -34,6 +38,10 @@ import { fileURLToPath } from 'node:url'
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const CONFIG_FILE = path.join(ROOT, 'lounge.agents.json')
 const STATE_FILE = path.join(ROOT, 'server', '.agents-state.json')
+const HISTORY_FILE = path.join(ROOT, 'server', '.agents-history.json')
+const CHAT_CAP = 200
+const ACTIVITY_CAP = 200
+const CHANGES_CAP = 15
 const HOOK_TOKEN = crypto.randomBytes(18).toString('hex')
 const HOME = process.env.HOME ?? ''
 
@@ -302,6 +310,61 @@ function persist() {
 
 loadConfig()
 
+// --- history: what the lounge shows, kept across tabs and restarts -------------
+// Per repo: chat (your messages + its final answers), activity lines and the
+// runs that changed files. Saved debounced; flushed on shutdown.
+
+const history = readJson(HISTORY_FILE, {})
+let histSeq = 0
+const hid = (p) => `${p}-${Date.now().toString(36)}-${++histSeq}`
+let saveTimer = null
+
+function historyOf(a) {
+  history[a.id] ??= { chat: [], activity: [], changes: [] }
+  return history[a.id]
+}
+
+function saveHistory() {
+  if (!saveTimer) saveTimer = setTimeout(flushHistory, 800)
+}
+
+function flushHistory() {
+  clearTimeout(saveTimer)
+  saveTimer = null
+  try {
+    fs.writeFileSync(HISTORY_FILE, JSON.stringify(history))
+  } catch (err) {
+    console.warn('[agents] could not save history', err?.message)
+  }
+}
+
+const capped = (list, n) => (list.length > n ? list.slice(-n) : list)
+
+/** A line in a repo's activity feed: stored, then streamed. */
+function activity(a, text, kind) {
+  const line = { id: hid('act'), text, kind, at: Date.now() }
+  const h = historyOf(a)
+  h.activity = capped([...h.activity, line], ACTIVITY_CAP)
+  saveHistory()
+  send({ type: 'activity', agentId: a.id, ...line })
+}
+
+/** Stores a chat message (replacing one with the same id). */
+function recordChat(a, message) {
+  const h = historyOf(a)
+  const i = h.chat.findIndex((m) => m.id === message.id)
+  if (i >= 0) h.chat[i] = message
+  else h.chat = capped([...h.chat, message], CHAT_CAP)
+  saveHistory()
+}
+
+/** History as the browser gets it, including a reply that's still streaming. */
+function publicHistory(a) {
+  const h = history[a.id] ?? { chat: [], activity: [], changes: [] }
+  const live = a.run ? [{ id: a.run.id, role: 'bot', text: a.run.text, at: a.run.started, streaming: true }] : []
+  return { chat: [...h.chat, ...live], activity: h.activity, changes: h.changes }
+}
+
 // --- server-sent events ------------------------------------------------------
 
 const clients = new Set()
@@ -451,6 +514,11 @@ function answer(a, requestId, allow, why) {
   a.pending.delete(requestId)
   p.resolve(decision(allow, allow ? 'Approved in AI Lounge.' : why ?? 'The user denied this step in AI Lounge.'))
   send({ type: 'permission-resolved', agentId: a.id, requestId, allow })
+  activity(
+    a,
+    allow ? 'You allowed the step' : why ? `Step denied — ${why.replace(/\.$/, '').toLowerCase()}` : 'You denied the step',
+    allow ? 'result' : 'thought',
+  )
   if (a.child && !a.pending.size) setStatus(a, 'working')
   return true
 }
@@ -583,7 +651,9 @@ async function startRun(a, text) {
   a.run = { id: runId, text: '', tools: 0, started: Date.now(), prompt: text }
   setStatus(a, 'working')
   send({ type: 'run-start', agentId: a.id, runId, prompt: text, model: a.model, effort: a.effort })
-  send({ type: 'reply', agentId: a.id, id: runId, text: '' })
+  activity(a, `Started: ${clip(text, 90)}`, 'info')
+  const at = a.run.started
+  send({ type: 'reply', agentId: a.id, id: runId, text: '', at })
 
   let buf = ''
   let stderr = ''
@@ -602,7 +672,7 @@ async function startRun(a, text) {
       ev.event.delta?.type === 'text_delta'
     ) {
       a.run.text += ev.event.delta.text
-      send({ type: 'reply', agentId: a.id, id: runId, text: a.run.text })
+      send({ type: 'reply', agentId: a.id, id: runId, text: a.run.text, at })
     } else if (ev.type === 'assistant') {
       for (const block of ev.message?.content ?? []) {
         if (block.type !== 'tool_use') continue
@@ -610,14 +680,14 @@ async function startRun(a, text) {
         // the final answer.
         const narration = a.run.text.trim()
         if (narration) {
-          send({ type: 'activity', agentId: a.id, text: clip(narration.replace(/\s+/g, ' '), 220), kind: 'thought' })
+          activity(a, clip(narration.replace(/\s+/g, ' '), 220), 'thought')
           a.run.text = ''
-          send({ type: 'reply', agentId: a.id, id: runId, text: '' })
+          send({ type: 'reply', agentId: a.id, id: runId, text: '', at })
         }
         a.run.tools += 1
         toolNames.set(block.id, describe(a, block.name, block.input))
         const d = toolNames.get(block.id)
-        send({ type: 'activity', agentId: a.id, text: d.text, kind: d.kind })
+        activity(a, d.text, d.kind)
       }
     } else if (ev.type === 'user') {
       const content = ev.message?.content
@@ -627,12 +697,7 @@ async function startRun(a, text) {
         const d = toolNames.get(block.tool_use_id)
         const msg = typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? '')
         const denied = /denied|hook error/i.test(msg)
-        send({
-          type: 'activity',
-          agentId: a.id,
-          text: `${denied ? 'Denied' : 'Failed'}: ${d?.text ?? 'tool call'}`,
-          kind: 'thought',
-        })
+        activity(a, `${denied ? 'Denied' : 'Failed'}: ${d?.text ?? 'tool call'}`, 'thought')
       }
     } else if (ev.type === 'result') {
       result = ev
@@ -682,23 +747,47 @@ async function startRun(a, text) {
       at: Date.now(),
     }
     persist()
-    if (finalText) send({ type: 'reply', agentId: a.id, id: runId, text: finalText })
+    const error = ok ? null : errorText ?? result?.subtype ?? 'unknown error'
+    const reply = finalText || (ok ? '' : `(Run ended: ${error})`)
+    if (reply) {
+      recordChat(a, { id: runId, role: 'bot', text: reply, at })
+      send({ type: 'reply', agentId: a.id, id: runId, text: reply, at })
+    }
+    activity(a, ok ? summaryLine(a.lastRun) : `Run ended: ${clip(error, 120)}`, ok ? 'result' : 'thought')
+    const doneAt = Date.now()
+    if (files.length) {
+      const h = historyOf(a)
+      h.changes = capped([...h.changes, { id: runId, prompt: a.run.prompt, summary: finalText, files, diff, at: doneAt }], CHANGES_CAP)
+      saveHistory()
+    }
     send({
       type: 'result',
       agentId: a.id,
       runId,
       ok: Boolean(ok),
-      error: ok ? null : errorText ?? result?.subtype ?? 'unknown error',
+      error,
       prompt: a.run.prompt,
       text: finalText,
       lastRun: a.lastRun,
       files,
       diff,
+      at: doneAt,
     })
     a.run = null
     setStatus(a, ok ? 'done' : 'idle')
     if (ok) setTimeout(() => !a.child && setStatus(a, 'idle'), 9000)
   }
+}
+
+function summaryLine(run) {
+  const files = run.files ?? 0
+  const parts = [
+    run.turns != null ? `${run.turns} turns` : '',
+    `${Math.max(1, Math.round(run.durationMs / 1000))} s`,
+    run.costUsd != null ? `$${run.costUsd.toFixed(2)}` : '',
+    files ? `${files} file${files > 1 ? 's' : ''} changed` : 'no file changes',
+  ].filter(Boolean)
+  return `Finished · ${parts.join(' · ')}`
 }
 
 // --- http routes -----------------------------------------------------------------
@@ -765,7 +854,13 @@ export async function handleAgents(req, res, url) {
       connection: 'keep-alive',
       'x-accel-buffering': 'no',
     })
-    res.write(`data: ${JSON.stringify({ type: 'snapshot', agents: [...agents.values()].map(publicAgent) })}\n\n`)
+    const all = [...agents.values()]
+    const snapshot = {
+      type: 'snapshot',
+      agents: all.map(publicAgent),
+      history: Object.fromEntries(all.map((a) => [a.id, publicHistory(a)])),
+    }
+    res.write(`data: ${JSON.stringify(snapshot)}\n\n`)
     clients.add(res)
     // A data heartbeat: the browser treats silence as "server gone" (a dev proxy
     // can keep the stream open after this process dies).
@@ -792,6 +887,10 @@ export async function handleAgents(req, res, url) {
       if (MODELS.has(body.model)) a.model = body.model
       if (EFFORTS.has(body.effort)) a.effort = body.effort
       persist()
+      // The page that sent it shows it already (same id); other tabs get it here.
+      const message = { id: /^[\w-]{1,80}$/.test(body.id ?? '') ? body.id : hid('u'), role: 'user', text, at: Date.now() }
+      recordChat(a, message)
+      send({ type: 'user-message', agentId: a.id, message })
       startRun(a, text)
       json(res, 202, { ok: true })
       return true
@@ -823,6 +922,10 @@ export async function handleAgents(req, res, url) {
       if (a.child || a.starting) return json(res, 409, { error: 'busy' }), true
       a.sessionId = null
       persist()
+      // The thread showed context the bot no longer has — clear it.
+      historyOf(a).chat = []
+      send({ type: 'chat-cleared', agentId: a.id })
+      activity(a, 'New session: previous conversation forgotten', 'info')
       send({ type: 'agent', agent: publicAgent(a) })
       json(res, 200, { ok: true })
       return true
@@ -836,6 +939,8 @@ export async function handleAgents(req, res, url) {
       }
       agents.delete(a.id)
       persist()
+      delete history[a.id]
+      saveHistory()
       send({ type: 'removed', agentId: a.id })
       json(res, 200, { ok: true })
       return true
@@ -850,4 +955,5 @@ export function agentCount() {
 
 export function stopAllAgents() {
   for (const a of agents.values()) a.child?.kill('SIGTERM')
+  flushHistory()
 }

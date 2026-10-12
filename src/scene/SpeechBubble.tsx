@@ -4,13 +4,19 @@ import { useSpeech } from '../state/sceneBus'
 const MAX = 92
 
 // Plain-text, single-thought version of a chat message for a bubble: strip
-// light markdown, keep the first ~90 characters.
+// light markdown, flatten lists into one line ("a · b"), keep the first ~90
+// characters.
 function clip(text: string): string {
-  // Drop markdown emphasis/code marks and heading/quote markers, but keep
-  // single underscores (file names like LOUNGE_TEST.md).
-  const t = text
+  // Drop markdown emphasis/code marks, heading/quote markers and list bullets,
+  // but keep single underscores (file names like LOUNGE_TEST.md).
+  const lines = text
     .replace(/\*\*|__|`/g, '')
-    .replace(/(^|\n)\s*[#>]+\s*/g, '$1')
+    .split('\n')
+    .map((l) => l.replace(/^\s*(?:[#>]+|[-*•]|\d+[.)])\s+/, '').trim())
+    .filter(Boolean)
+  const t = lines
+    .map((l, i) => (i && !/[.:!?]$/.test(lines[i - 1]) ? `· ${l}` : l))
+    .join(' ')
     .replace(/\s+/g, ' ')
     .trim()
   if (t.length <= MAX) return t
@@ -19,9 +25,9 @@ function clip(text: string): string {
   return `${cut.slice(0, sp > 60 ? sp : MAX).trimEnd()}…`
 }
 
-// A comic-style speech bubble above a bot's head: what it just said in the
-// team channel or to you (streams in as the reply grows), or typing dots while
-// it composes. Pops in, lingers a few seconds (longer for longer lines), fades.
+// A comic-style speech bubble above a bot's head: what it just told you
+// (streams in as the reply grows) or the step it wants your OK for, or typing
+// dots while it composes. Pops in, lingers a few seconds (longer for longer lines), fades.
 // Decorative — the same text is in the chat views — so it's aria-hidden.
 export function SpeechBubble({ botId }: { botId: string }) {
   const s = useSpeech(botId)

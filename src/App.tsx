@@ -24,7 +24,8 @@ function LoungeView({ onAddRepo }: { onAddRepo: () => void }) {
         </div>
       ) : (
         <p className="stage__hint" aria-hidden>
-          Drag to look around · scroll to zoom · click a bot to open it
+          <span className="hint--pointer">Drag to look around · scroll to zoom · click a bot to open it</span>
+          <span className="hint--touch">Drag to look around · pinch to zoom · tap a bot to open it</span>
         </p>
       )}
     </div>

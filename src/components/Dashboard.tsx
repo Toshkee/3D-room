@@ -3,7 +3,7 @@ import type { AgentRun, Bot } from '../types'
 import { Avatar } from './Avatar'
 import { StatusPill } from './StatusPill'
 import { EmptyState } from './EmptyState'
-import { FolderGit2, Hand } from './icons'
+import { FolderGit2, FolderPlus, Hand } from './icons'
 import { fmtAgo } from '../util'
 
 // Every repo at a glance: who needs you, who's working, what the last run did.
@@ -45,6 +45,13 @@ export function Dashboard({ onAddRepo }: { onAddRepo: () => void }) {
             run={runs[bot.id]}
           />
         ))}
+        <button type="button" className="card card--add" onClick={onAddRepo}>
+          <span className="card--add__icon">
+            <FolderPlus size={20} strokeWidth={2.3} />
+          </span>
+          <span className="card--add__title">Add a repo</span>
+          <span className="card--add__sub">Another folder, another robot.</span>
+        </button>
       </div>
     </div>
   )

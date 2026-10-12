@@ -18,14 +18,22 @@ Core surfaces:
   panel. With no repos yet, an empty-state card asks you to start the server or
   add a repo.
 - **Bot panel** — the repo path, the **Allow / Deny** card when the bot waits
-  on you, **Stop** / **New session**, a folded settings chip (`model · effort`
-  → model/effort/auto-approve/**Remove**), **Changes** (files + diff per run),
-  the live **activity feed**, and the **chat** you give it work through. The
-  chat gets the most height; its composer is an auto-growing textarea (Enter
-  sends, Shift+Enter new line) that keeps the draft but won't send while the
-  bot is busy or the server is offline, and says why.
+  on you, **Stop** / **New session**, a trash button (**Remove**, asks once;
+  disabled while it runs), a folded settings chip (`model · effort` →
+  model/effort/auto-approve), one **Activity | Changes** tab area
+  (live feed; one row per run that changed files), and the **chat** you give
+  it work through. The chat gets the most height; a reply whose run changed
+  files carries a **View diff** chip. The composer is an auto-growing textarea
+  (Enter sends, Shift+Enter new line) that keeps the draft but won't send while
+  the bot is busy or the server is offline, and says why. Bot replies render
+  as Markdown (`components/Markdown.tsx`: react-markdown + remark-gfm, no raw
+  HTML, code blocks with a copy button); your own messages stay plain text.
+- **Diff dialog** (`DiffModal`) — per-file sections with sticky headers,
+  old/new line numbers, git's bookkeeping lines hidden; file chips jump to a
+  file; Copy diff copies the raw diff.
 - **Dashboard** — one card per repo: status, what it's doing or last did, who
-  needs you, last run (when, files changed, cost).
+  needs you, last run (when, files changed, cost) — plus a dashed *Add a repo*
+  card.
 - **Add repo** — a modal: folder (git repos under `~` are suggested), bot name,
   color → the server writes `lounge.agents.json` and the bot walks in the door.
 
@@ -56,11 +64,13 @@ each **bot** also has its own accent used for its avatar/monitor/chat bubble.
   (`scene/Effects.tsx`); emissive screens/neon cross the bloom threshold.
 - **server/** — plain Node (no deps): `index.mjs` (routing + guards) and
   `agents.mjs` (repo agents).
-- No database. **localStorage** keeps the theme (`ai-lounge-theme`), the
-  **sound toggle** (`ai-lounge-sound`, off by default) and what the browser has
-  seen (`ai-lounge-state-v2`: bots + seats, chats, activity, changes —
-  debounced save in `LoungeContext`). The **server** owns the roster
-  (`lounge.agents.json`) and sessions (`server/.agents-state.json`).
+- No database. The **server** owns the roster (`lounge.agents.json`), the
+  sessions (`server/.agents-state.json`) and the **history** — chat, activity,
+  changes per repo (`server/.agents-history.json`, all gitignored); every SSE
+  snapshot carries the history and the page replaces its copy with it.
+  **localStorage** keeps the theme (`ai-lounge-theme`), the **sound** and
+  **notification** toggles (`ai-lounge-sound`, `ai-lounge-notify`, both off by
+  default) and an offline copy of what the page showed (`ai-lounge-state-v2`).
 
 ## Repo agents (the important seam)
 
@@ -96,7 +106,15 @@ plus roster / removed / permission / run stats / connection), and
   offline strip appears. Saved bots stay in the room (idle) while offline.
 - Session ids, model/effort, autoEdits and the last run persist in
   `server/.agents-state.json`. "New session" forgets the context and clears the
-  chat thread.
+  chat thread (server-side, for every open tab).
+- **History:** the server builds every feed line ("Started…", tool calls,
+  "You allowed the step", "Finished · …"), stores your messages (under the id
+  the page sent) and each final answer, and the runs that changed files. The
+  page only maps events onto state — don't create feed lines client-side.
+- **Notifications** (`src/notify.ts`): browser notifications (→ macOS
+  Notification Center) for "needs your OK", "done" and "stopped early", only
+  while the lounge tab isn't focused; clicking one opens that bot. Toggled by
+  the bell in the TopBar, which asks the browser for permission.
 - **Security:** the server listens on **127.0.0.1 only**, refuses non-local
   Host/Origin headers and non-JSON POSTs (so other sites can't drive an agent
   through the browser). Keep it that way — these agents can edit files and run
@@ -124,7 +142,8 @@ typing at a desk (`setKeys`, for keyboard sounds). Consumers: `BotAvatar`
   bookshelf, scribbles on the whiteboard; *idle* → arcades (whose screens show a
   score), pool table, sofa/armchair/beanbag, vending machine (leaves sipping a
   can); *done* → hop + confetti burst; *waiting* → stops, faces the camera,
-  raises a hand. Selecting a bot makes it stop and wave.
+  raises a hand. Selecting a bot makes it stop and wave (other bots step
+  aside for it). The floating status pill shows only when it's not *idle*.
 - **`scene/Conductor.tsx`** pairs two *free* bots (idle/done) now and then: one
   walks over, they face each other and gesture. Pure body language — no text,
   no Claude calls.
@@ -147,15 +166,19 @@ typing at a desk (`setKeys`, for keyboard sounds). Consumers: `BotAvatar`
 ## Commands
 
 - `npm install` — install dependencies
-- `npm run server` — the lounge server (repo agents) at http://127.0.0.1:8787
-- `npm run dev` — the app at http://localhost:5173 (proxies `/api` to the server)
+- `npm start` — builds the app (`vite build`), then the server serves it at
+  http://127.0.0.1:8787 and opens the browser. The daily way to use it.
+- `npm run server` — the lounge server alone (also serves `dist/` if built)
+- `npm run dev` — the app with hot reload at http://localhost:5173 (proxies
+  `/api` to the server) — for working on the lounge itself
 - `npm run build` — type-check (`tsc -b`) + production build to `dist/`
 - `npm run typecheck` — type-check only
 
 ## Structure
 
 - `index.html` — mount point + `<html data-theme="light">`
-- `server/index.mjs` — routing + local-only guards + `/api/health`;
+- `server/index.mjs` — routing + local-only guards + `/api/health` + serving
+  `dist/`;
   `server/agents.mjs` — repo agents, add/remove/suggest, the approval hook,
   change tracking, SSE
 - `lounge.agents.example.json` — template for the gitignored `lounge.agents.json`
@@ -172,6 +195,7 @@ typing at a desk (`setKeys`, for keyboard sounds). Consumers: `BotAvatar`
   - `theme.ts` — `ACCENT`, `ACCENT_SWATCHES`, and `ROOM[theme]` (flat furniture
     palette per theme)
   - `util.ts` — `fmtTime`, `fmtAgo`, `clamp`, `mixHex`, `hash01`
+  - `notify.ts` — system notifications (permission, pref, show-when-hidden)
   - `usePrefersReducedMotion.ts`
   - `data/bots.ts` — **`SEATS`** (room seat coords), `LABEL_Y`, `firstOpenSeat`
   - `data/roam.ts` — the walkway graph (nodes per activity), status-driven goal
@@ -187,7 +211,9 @@ typing at a desk (`setKeys`, for keyboard sounds). Consumers: `BotAvatar`
   - `scene/`
     - `Lounge3D.tsx` — `<Canvas orthographic>` + composition; owns the `World`
     - `CameraRig.tsx` — intro crane, OrbitControls (azimuth clamped to the open
-      side of the room), follow-the-selected-bot, idle ping-pong orbit
+      side of the room), follow-the-selected-bot, idle ping-pong orbit; on a
+      portrait screen it frames the bots instead of the whole room; it leaves
+      your zoom alone until you've been hands-off for 8 s (or pick a bot)
     - `Lighting.tsx` — hemisphere + key (one shadow caster, warms at golden
       hour) + rim + front fill
     - `Effects.tsx` — post pipeline (AO, bloom, vignette, SMAA)
@@ -201,7 +227,7 @@ typing at a desk (`setKeys`, for keyboard sounds). Consumers: `BotAvatar`
     - `SpeechBubble.tsx`, `Roomba.tsx`, `world.ts`, `canvasArt.ts`,
       `timeOfDay.ts`, `softShadow.tsx`
   - `components/` — `TopBar`, `Avatar`, `RobotFace`, `StatusPill`, `TypeLine`
-    (typewriter), `ActivityFeed`, `ChatThread`, `BotPanel`, `Dashboard`,
+    (typewriter + `useTyped`), `Markdown`, `DiffModal`, `ActivityFeed`, `ChatThread`, `BotPanel`, `Dashboard`,
     `AddRepoModal`, `EmptyState` (+ `OfflineBanner`), `icons`
 
 ## Conventions
@@ -248,7 +274,8 @@ typing at a desk (`setKeys`, for keyboard sounds). Consumers: `BotAvatar`
 - Keep it a single self-contained app — no state libraries; the one store is
   `LoungeContext`. Don't over-engineer.
 - Verify with `npm run build` (type-check + bundle). To smoke-test the live
-  render, run `npm run server` + `npm run dev` and confirm zero console errors —
+  render, run `npm start` (or `npm run server` + `npm run dev`) and confirm
+  zero console errors —
   the WebGL scene needs a real browser (Playwright/Chrome render WebGL2; note
   headless defaults `prefers-reduced-motion: reduce`, which freezes the
   parallax/typewriter). Stop the servers when done.

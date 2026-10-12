@@ -31,8 +31,9 @@ import {
 import { usePrefersReducedMotion } from '../usePrefersReducedMotion'
 import { sceneBus } from './sceneBus'
 import { loungeAudio } from '../audio/loungeAudio'
+import { loadNotifyPref, notify, notifySupported, requestNotify, saveNotifyPref } from '../notify'
 
-const ACTIVITY_CAP = 40
+const ACTIVITY_CAP = 200
 const CHAT_CAP = 200
 const CHANGES_CAP = 20
 const STORAGE_KEY = 'ai-lounge-state-v2'
@@ -43,9 +44,10 @@ let seq = 0
 const uid = (p: string) => `${p}-${Date.now().toString(36)}-${++seq}`
 
 // --- persistence -------------------------------------------------------------
-// The server owns the roster and the sessions; the browser keeps what it has
-// seen (chats, feed, changes) plus the bots, so the room isn't empty while the
-// server is starting or down, and every bot keeps its seat across reloads.
+// The server owns the roster, the sessions and the history (chats, feed,
+// changes — replaced from its snapshot on every connect). The browser keeps a
+// copy plus the bots, so the room isn't empty while the server is starting or
+// down, and every bot keeps its seat across reloads.
 
 interface SavedState {
   bots: Bot[]
@@ -94,6 +96,16 @@ const linkOf = (a: AgentInfo): RepoLink => ({
   autoEdits: a.autoEdits,
 })
 
+/** First non-empty line of a reply, without Markdown marks, for a notification. */
+const clipLine = (s: string, n: number) => {
+  const first = s.split('\n').find((l) => l.trim()) ?? ''
+  const line = first.replace(/[*_`#>]/g, '').trim()
+  return line.length > n ? `${line.slice(0, n - 1)}…` : line
+}
+
+/** Notification toggle state: on/off, or why it can't be on. */
+export type NotifyState = 'on' | 'off' | 'blocked' | 'unsupported'
+
 export interface NewRepo {
   path: string
   name?: string
@@ -108,6 +120,8 @@ interface LoungeState {
   reducedMotion: boolean
   /** Ambient sound + chimes (off until the user turns it on). */
   sound: boolean
+  /** System notifications when a bot needs you / finishes (off by default). */
+  notifications: NotifyState
   /** Whether the local server (and so every repo agent) is reachable. */
   connection: Connection
   activity: Record<string, ActivityLine[]>
@@ -122,6 +136,7 @@ interface LoungeState {
   setView(v: View): void
   toggleTheme(): void
   toggleSound(): void
+  toggleNotifications(): void
   selectBot(id: string | null): void
   sendChat(botId: string, text: string): void
   answerPermission(botId: string, requestId: string, allow: boolean): void
@@ -182,9 +197,20 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
     }
   }, [sound])
 
+  const [notifications, setNotifications] = useState<NotifyState>(() => {
+    if (!notifySupported) return 'unsupported'
+    if (loadNotifyPref()) return 'on'
+    return Notification.permission === 'denied' ? 'blocked' : 'off'
+  })
+  const notifyOn = useRef(notifications === 'on')
+  notifyOn.current = notifications === 'on'
+
   // Live ref so handlers and actions always read the current roster.
   const botsRef = useRef(bots)
   botsRef.current = bots
+  /** Each bot's latest reply (for the "done" notification) and the asks already notified. */
+  const lastReply = useRef<Record<string, string>>({})
+  const notifiedAsks = useRef(new Set<string>())
 
   // Persist what the room accumulates (debounced; theme and sound have their
   // own keys).
@@ -203,6 +229,10 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
   // --- the link to the server (created once) ---------------------------------
   const handlersRef = useRef<LinkHandlers | null>(null)
   if (!handlersRef.current) {
+    const nameOf = (botId: string) => botsRef.current.find((b) => b.id === botId)?.name ?? 'A bot'
+    const ping = (botId: string, title: string, body: string) => {
+      if (notifyOn.current) notify(title, body, botId, () => setSelectedId(botId))
+    }
     handlersRef.current = {
       onConnection: (state) => {
         setConnection(state)
@@ -250,6 +280,14 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
           return next
         })
       },
+      onHistory: (botId, h) => {
+        setChats((prev) => ({ ...prev, [botId]: h.chat.slice(-CHAT_CAP) }))
+        setActivity((prev) => ({ ...prev, [botId]: h.activity.slice(-ACTIVITY_CAP) }))
+        setChanges((prev) => ({ ...prev, [botId]: h.changes.slice(-CHANGES_CAP) }))
+        const last = h.chat.filter((m) => m.from !== 'user').at(-1)
+        if (last) lastReply.current[botId] = last.text
+      },
+      onChatCleared: (botId) => setChats((prev) => without(prev, botId)),
       onRemoved: (botId) => {
         setBots((prev) => prev.filter((b) => b.id !== botId))
         setSelectedId((cur) => (cur === botId ? null : cur))
@@ -263,7 +301,10 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
         if (patch.status === 'done') {
           const bot = botsRef.current.find((b) => b.id === botId)
           // Its final answer is already in the speech bubble; just celebrate.
-          if (bot && bot.status !== 'done') sceneBus.emit({ type: 'celebrate', botId })
+          if (bot && bot.status !== 'done') {
+            sceneBus.emit({ type: 'celebrate', botId })
+            ping(botId, `${bot.name} is done`, clipLine(lastReply.current[botId] ?? bot.task, 140))
+          }
         }
         setBots((prev) => prev.map((b) => (b.id === botId ? { ...b, ...patch } : b)))
       },
@@ -274,6 +315,7 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
         }),
       onChat: (botId, message) => {
         if (message.from !== 'user') {
+          lastReply.current[botId] = message.text
           const text = message.text.trim()
           if (text) sceneBus.emit({ type: 'say', botId, id: message.id, text })
           else sceneBus.emit({ type: 'typing', botId })
@@ -297,9 +339,18 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
               ? `May I run: ${first.detail}`
               : `May I ${first.summary.charAt(0).toLowerCase()}${first.summary.slice(1)}?`
           sceneBus.emit({ type: 'say', botId, id: first.requestId, text: ask })
+          if (!notifiedAsks.current.has(first.requestId)) {
+            notifiedAsks.current.add(first.requestId)
+            ping(botId, `${nameOf(botId)} needs your OK`, ask)
+          }
         }
       },
-      onRun: (botId, run) => setRuns((prev) => ({ ...prev, [botId]: run })),
+      onRun: (botId, run, live) => {
+        setRuns((prev) => ({ ...prev, [botId]: run }))
+        if (live && !run.ok) {
+          ping(botId, `${nameOf(botId)} stopped early`, run.prompt ?? 'The run ended before finishing.')
+        }
+      },
     }
   }
   const linkRef = useRef<RepoAgentLink | null>(null)
@@ -325,6 +376,19 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
   // Toggled from a click, so the effect above may start the audio context.
   const toggleSound = useCallback(() => setSound((on) => !on), [])
 
+  // Turning notifications on asks the browser first (needs the click).
+  const toggleNotifications = useCallback(() => {
+    if (notifyOn.current) {
+      saveNotifyPref(false)
+      setNotifications('off')
+      return
+    }
+    void requestNotify().then((ok) => {
+      saveNotifyPref(ok)
+      setNotifications(ok ? 'on' : notifySupported && Notification.permission === 'denied' ? 'blocked' : 'off')
+    })
+  }, [])
+
   const selectBot = useCallback((id: string | null) => setSelectedId(id), [])
 
   /** A note from the lounge itself in a bot's feed (not something it did). */
@@ -339,8 +403,10 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
     const msg: Message = { id: uid('u'), from: 'user', text: trimmed, at: Date.now() }
     setChats((prev) => ({ ...prev, [botId]: upsert(prev[botId] ?? [], msg) }))
     sceneBus.emit({ type: 'typing', botId }) // the bot "composes" its reply
-    // A real run in the repo; its reply streams back over the link.
-    void linkRef.current!.send(botId, trimmed, { model: bot.agent.model, effort: bot.agent.effort }).then((err) => {
+    // A real run in the repo; its reply streams back over the link. The server
+    // stores the message under the same id.
+    const opts = { id: msg.id, model: bot.agent.model, effort: bot.agent.effort }
+    void linkRef.current!.send(botId, trimmed, opts).then((err) => {
       if (!err) return
       handlersRef.current!.onChat(botId, { id: uid('sys'), from: botId, text: err, at: Date.now() })
     })
@@ -352,14 +418,12 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
 
   const stopAgent = useCallback((botId: string) => linkRef.current!.stopRun(botId), [])
 
-  // A fresh session forgets the conversation, so the thread is cleared too —
-  // otherwise the chat would show context the bot no longer has.
+  // A fresh session forgets the conversation; the server clears the thread
+  // (chat-cleared) and notes it in the feed.
   const resetAgentSession = useCallback(
     (botId: string) => {
       void linkRef.current!.reset(botId).then((err) => {
-        if (err) return note(botId, `Couldn't start a new session: ${err}`, 'thought')
-        setChats((prev) => without(prev, botId))
-        note(botId, 'New session: previous conversation forgotten')
+        if (err) note(botId, `Couldn't start a new session: ${err}`, 'thought')
       })
     },
     [note],
@@ -385,6 +449,7 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
       selectedId,
       reducedMotion,
       sound,
+      notifications,
       connection,
       activity,
       chats,
@@ -394,6 +459,7 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
       setView,
       toggleTheme,
       toggleSound,
+      toggleNotifications,
       selectBot,
       sendChat,
       answerPermission,
@@ -411,6 +477,7 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
       selectedId,
       reducedMotion,
       sound,
+      notifications,
       connection,
       activity,
       chats,
@@ -419,6 +486,7 @@ export function LoungeProvider({ children }: { children: ReactNode }) {
       runs,
       toggleTheme,
       toggleSound,
+      toggleNotifications,
       selectBot,
       sendChat,
       answerPermission,
