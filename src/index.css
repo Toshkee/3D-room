@@ -126,6 +126,15 @@ h3 {
   border-bottom: 1px solid var(--border);
   z-index: 20;
 }
+/* Inside the Mac app: the window's traffic lights sit in the top bar's left
+   corner, and the bar itself drags the window. */
+html[data-shell='mac'] .topbar {
+  padding-left: 92px;
+  -webkit-app-region: drag;
+}
+html[data-shell='mac'] .topbar :is(button, a, .tabs) {
+  -webkit-app-region: no-drag;
+}
 .brand {
   display: flex;
   align-items: center;

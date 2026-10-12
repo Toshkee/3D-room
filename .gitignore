@@ -27,3 +27,6 @@ dist-ssr
 lounge.agents.json
 server/.agents-state.json
 server/.agents-history.json
+
+# The Mac app build (npm run app)
+release

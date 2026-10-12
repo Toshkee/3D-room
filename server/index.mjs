@@ -4,7 +4,7 @@
 // repos, on your Claude Code login, streamed to the lounge.
 //
 // Endpoints:
-//   GET  /api/health  → { ok, agents }
+//   GET  /api/health  → { ok, agents, claude } (claude: where the CLI was found, or null)
 //   /api/agents/*     → repo agents (see server/agents.mjs)
 //   everything else   → the built app from dist/ (so `npm start` is all you need)
 //
@@ -15,11 +15,12 @@
 //
 // Run with:  npm start        (builds the app, serves it here, opens the browser)
 //       or:  npm run server   (just this; use with `npm run dev` while hacking on the UI)
-import { spawn } from 'node:child_process'
+// The Mac app (electron/main.mjs) imports this module and calls startServer().
+import { execFileSync, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { agentCount, handleAgents, stopAllAgents } from './agents.mjs'
 
 const PORT = Number(process.env.PORT || 8787)
@@ -41,6 +42,15 @@ const TYPES = {
 function json(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json' })
   res.end(JSON.stringify(body))
+}
+
+/** Where `claude` resolves on this server's PATH (null: the bots can't run). */
+function claudePath() {
+  try {
+    return execFileSync('/usr/bin/which', ['claude'], { encoding: 'utf8', timeout: 3000 }).trim() || null
+  } catch {
+    return null
+  }
 }
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
@@ -99,24 +109,44 @@ const server = http.createServer(async (req, res) => {
   if (await handleAgents(req, res, url)) return
 
   if (req.method === 'GET' && url.pathname === '/api/health') {
-    return json(res, 200, { ok: true, agents: agentCount() })
+    return json(res, 200, { ok: true, agents: agentCount(), claude: claudePath() })
   }
   if (url.pathname.startsWith('/api/')) return json(res, 404, { error: 'not found' })
   serveApp(req, res, url)
 })
 
-server.listen(PORT, '127.0.0.1', () => {
-  const url = `http://127.0.0.1:${PORT}`
-  console.log(`AI Lounge on ${url}  (repos: ${agentCount()})`)
-  if (process.argv.includes('--open')) {
-    const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open'
-    spawn(opener, [url], { stdio: 'ignore', detached: true }).on('error', () => {}).unref()
-  }
-})
-
-for (const sig of ['SIGINT', 'SIGTERM']) {
-  process.on(sig, () => {
-    stopAllAgents()
-    process.exit(0)
+/** Starts listening on 127.0.0.1. Resolves to the URL; rejects if the port is taken. */
+export function startServer({ port = PORT, open = false } = {}) {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(port, '127.0.0.1', () => {
+      const url = `http://127.0.0.1:${port}`
+      console.log(`AI Lounge on ${url}  (repos: ${agentCount()})`)
+      if (open) {
+        const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open'
+        spawn(opener, [url], { stdio: 'ignore', detached: true }).on('error', () => {}).unref()
+      }
+      resolve(url)
+    })
   })
+}
+
+/** Stops every run and saves the history (the server goes down with the process). */
+export function stopServer() {
+  stopAllAgents()
+  server.close()
+}
+
+// Run directly (npm start / npm run server), not imported by the Mac app.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  startServer({ open: process.argv.includes('--open') }).catch((err) => {
+    console.error(err?.code === 'EADDRINUSE' ? `Port ${PORT} is already in use — is the lounge already running?` : err)
+    process.exit(1)
+  })
+  for (const sig of ['SIGINT', 'SIGTERM']) {
+    process.on(sig, () => {
+      stopAllAgents()
+      process.exit(0)
+    })
+  }
 }

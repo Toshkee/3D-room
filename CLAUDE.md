@@ -171,14 +171,17 @@ typing at a desk (`setKeys`, for keyboard sounds). Consumers: `BotAvatar`
 - `npm run server` — the lounge server alone (also serves `dist/` if built)
 - `npm run dev` — the app with hot reload at http://localhost:5173 (proxies
   `/api` to the server) — for working on the lounge itself
+- `npm run app` — builds the **Mac app** and installs `/Applications/AI
+  Lounge.app` (quit the app first); `npm run app:dev` runs it from source
 - `npm run build` — type-check (`tsc -b`) + production build to `dist/`
 - `npm run typecheck` — type-check only
 
 ## Structure
 
 - `index.html` — mount point + `<html data-theme="light">`
+- `electron/` — `main.mjs` (the Mac app), `install.mjs`; `build/icon.png`
 - `server/index.mjs` — routing + local-only guards + `/api/health` + serving
-  `dist/`;
+  `dist/`, `startServer()` / `stopServer()` for the app;
   `server/agents.mjs` — repo agents, add/remove/suggest, the approval hook,
   change tracking, SSE
 - `lounge.agents.example.json` — template for the gitignored `lounge.agents.json`
@@ -260,14 +263,33 @@ typing at a desk (`setKeys`, for keyboard sounds). Consumers: `BotAvatar`
   brand text under 620px and the logo under 440px so its buttons fit a 390px
   phone; `touch-action: none` on the canvas. Keep it usable on a phone.
 
+## The Mac app (`electron/`)
+
+`electron/main.mjs` starts the same server in-process (`startServer` from
+`server/index.mjs`) on **port 8790** with `LOUNGE_DATA_DIR` = `~/Library/
+Application Support/AI Lounge`, so it never collides with `npm start` (8787,
+data in the repo) — tests against the repo can't touch the app's real repos.
+It copies the login shell's PATH first (Finder-launched apps get a bare PATH;
+`claude` lives under nvm). The window loads `/?shell=mac` → `main.tsx` sets
+`html[data-shell=mac]` → the top bar leaves room for the traffic lights and
+drags the window. Closing the window keeps the server and bots running; Cmd+Q
+asks if a bot is busy, then stops everything; the Dock badge mirrors the
+"(n) AI Lounge" title. `electron/install.mjs` ad-hoc signs and copies the
+build to /Applications. The icon (`build/icon.png`) is the memoji from
+pavletosic.com composed with its eye layers. Personal build: unsigned for
+distribution, Claude via the user's own CLI login.
+
+All npm packages are **devDependencies** on purpose: the UI is bundled into
+`dist/` and the server has no deps, so electron-builder packs no node_modules.
+
 ## Roadmap
 
 - Image attachments in the chat (paste/drag a screenshot → saved outside the
   repo → path handed to the agent, which reads it with the Read tool).
 - Repo dev servers run by the lounge (Start/Stop, logs, open link).
 - A bot editor (look, personality → appended system prompt, approval rules).
-- Packaging as a desktop app (Electron + Claude Agent SDK) — see the product
-  note above about auth.
+- Distributing the app to others (Agent SDK + API keys, signing/notarization,
+  Windows) — see the product note above about auth.
 
 ## Notes
 

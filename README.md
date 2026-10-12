@@ -36,6 +36,12 @@ npm install
 npm start          # builds the app, serves it at http://127.0.0.1:8787 and opens it
 ```
 
+Or install it as a Mac app (its own window and Dock icon, no terminal):
+
+```bash
+npm run app        # builds and installs /Applications/AI Lounge.app
+```
+
 Then press **Add repo**. Repos live in `lounge.agents.json` (gitignored; see
 `lounge.agents.example.json`). The server only listens on `127.0.0.1` and
 refuses requests from other sites, because these agents can edit files and run

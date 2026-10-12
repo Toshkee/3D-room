@@ -36,9 +36,16 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const CONFIG_FILE = path.join(ROOT, 'lounge.agents.json')
-const STATE_FILE = path.join(ROOT, 'server', '.agents-state.json')
-const HISTORY_FILE = path.join(ROOT, 'server', '.agents-history.json')
+// Where the roster, sessions and history live: the repo itself by default
+// (npm start / npm run server), or LOUNGE_DATA_DIR — the Mac app points it at
+// ~/Library/Application Support/AI Lounge so it never mixes with dev data.
+const DATA_DIR = process.env.LOUNGE_DATA_DIR ? path.resolve(process.env.LOUNGE_DATA_DIR) : null
+if (DATA_DIR) fs.mkdirSync(DATA_DIR, { recursive: true })
+const CONFIG_FILE = path.join(DATA_DIR ?? ROOT, 'lounge.agents.json')
+const STATE_FILE = DATA_DIR ? path.join(DATA_DIR, 'agents-state.json') : path.join(ROOT, 'server', '.agents-state.json')
+const HISTORY_FILE = DATA_DIR
+  ? path.join(DATA_DIR, 'agents-history.json')
+  : path.join(ROOT, 'server', '.agents-history.json')
 const CHAT_CAP = 200
 const ACTIVITY_CAP = 200
 const CHANGES_CAP = 15
@@ -951,6 +958,11 @@ export async function handleAgents(req, res, url) {
 
 export function agentCount() {
   return agents.size
+}
+
+/** Names of the repos with a run in progress (the Mac app asks before quitting). */
+export function busyAgents() {
+  return [...agents.values()].filter((a) => a.child || a.starting).map((a) => a.name)
 }
 
 export function stopAllAgents() {
