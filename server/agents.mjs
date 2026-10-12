@@ -7,9 +7,10 @@
 //   claude -p "<your message>" --resume <session> --output-format stream-json
 //          --model <m> --effort <e> --settings <PreToolUse http hook → here>
 //
-// Every tool call first hits our PreToolUse HTTP hook. Read-only tools are
-// allowed on the spot; anything that changes the repo or runs a command is
-// held until you press Allow / Deny in the lounge (the hook request stays open
+// Every tool call first hits our PreToolUse HTTP hook. Reading inside the
+// bot's own repo is allowed on the spot (reading anywhere else asks); anything
+// that changes files or runs a command is held until you press Allow / Deny in
+// the lounge (the hook request stays open
 // meanwhile). `onFailure: "block"` means if this server dies mid-run, the
 // pending step is blocked rather than waved through.
 //
@@ -110,12 +111,20 @@ function shellWords(segment) {
   return (segment.match(/"(?:[^"\\]|\\.)*"|'[^']*'|\S+/g) ?? []).map((w) => w.replace(/^["']|["']$/g, ''))
 }
 
-export function isReadOnlyShell(command) {
+/**
+ * True when `command` only reads — and, given `root`, only reads inside that
+ * folder (relative paths resolve from `cwd`, the shell's current directory).
+ */
+export function isReadOnlyShell(command, root = null, cwd = root) {
   let cmd = String(command ?? '')
   // Harmless redirections of noise.
   cmd = cmd.replace(/\s[12]?>\s?\/dev\/null/g, ' ').replace(/\s2>&1/g, ' ')
   // Anything that could write or run a nested command, quoted or not.
   if (/[>`]|\$\(|<\(|\n/.test(cmd)) return false
+  // $VARS can point anywhere ($HOME) or print secrets ($API_KEY).
+  if (root && /\$[A-Za-z_{]/.test(cmd)) return false
+  // A shell already outside the repo (an approved `cd ..`) reads outside even with no arguments.
+  if (root && !insideRepo(root, '.', cwd)) return false
   const segments = shellSegments(cmd)
   if (!segments) return false
   for (const raw of segments) {
@@ -124,7 +133,9 @@ export function isReadOnlyShell(command) {
     const [bin, ...rest] = words
     if (/=/.test(bin)) return false // VAR=… prefixes
     if (bin === 'git') {
+      if (root && rest[0] === '-C' && !insideRepo(root, rest[1], cwd)) return false
       const args = rest[0] === '-C' ? rest.slice(2) : rest
+      if (args.includes('--no-index')) return false // diffs arbitrary files
       const sub = args[0]
       if (!GIT_READERS.has(sub)) return false
       if (sub === 'branch' && args.slice(1).some((x) => !/^(-a|-r|-v|-vv|--list|--all|--show-current)$/.test(x))) return false
@@ -138,16 +149,111 @@ export function isReadOnlyShell(command) {
     if (bin === 'sed' && !(rest[0] === '-n' && rest.slice(1, -1).every((x) => /^\d+(,\d+)?p$/.test(x)))) return false
     if ((bin === 'sort' || bin === 'tree') && /(^|\s)-o\b/.test(line)) return false
     if (bin === 'rg' && /--pre\b/.test(line)) return false
+    if (root && !shellPathsInside(root, cwd, bin, rest)) return false
   }
   return true
+}
+
+// Arguments of these never name a file to read.
+const NO_PATH_ARGS = new Set(['echo', 'printf', 'pwd', 'true', 'which', 'basename', 'dirname', 'tr'])
+
+/** Every file/folder argument of one read-only command lies inside `root`. */
+function shellPathsInside(root, cwd, bin, args) {
+  if (NO_PATH_ARGS.has(bin)) return true
+  // `cd` alone goes home and `cd -` somewhere unknown.
+  if (bin === 'cd') return args.length === 1 && args[0] !== '-' && insideRepo(root, args[0], cwd)
+  const paths = []
+  // A flag's value that looks like a path (--file=/x) counts too.
+  for (const w of args) {
+    const v = w.startsWith('-') && w.includes('=') ? w.slice(w.indexOf('=') + 1) : null
+    if (v && /^(\/|~)|(^|\/)\.\.(\/|$)/.test(v)) paths.push(v)
+  }
+  const plain = args.filter((w) => !w.startsWith('-'))
+  if (bin === 'grep' || bin === 'egrep' || bin === 'rg') {
+    // grep [flags] PATTERN [FILE…] — unless patterns come via -e / -f.
+    let pattern = args.some((w) => w === '-e' || w === '--regexp' || w === '-f' || w === '--file')
+    for (let i = 0; i < args.length; i++) {
+      const w = args[i]
+      if (w === '-e' || w === '--regexp') i++
+      else if (w === '-f' || w === '--file') paths.push(args[++i])
+      else if (!w.startsWith('-')) {
+        if (!pattern) pattern = true
+        else paths.push(w)
+      }
+    }
+  } else if (bin === 'jq') {
+    paths.push(...plain.slice(1)) // the first one is the filter
+  } else if (bin === 'sed') {
+    paths.push(args.at(-1)) // sed -n 'N,Mp' FILE (see isReadOnlyShell)
+  } else if (bin === 'find') {
+    // find PATH… EXPRESSION — only the starting points are paths.
+    const end = args.findIndex((w) => w.startsWith('-') || w === '(' || w === '!')
+    paths.push(...(end < 0 ? args : args.slice(0, end)))
+  } else {
+    paths.push(...plain)
+  }
+  return paths.every((p) => insideRepo(root, p, cwd))
+}
+
+// --- staying inside the repo -------------------------------------------------------
+// Reads run without asking and edits can be auto-approved — but only inside
+// the bot's own repo. A path that leads out of it (absolute, ~, .., $VARS, a
+// symlink pointing elsewhere) goes to the user like any other step.
+
+/** `p` (relative to `base`) as a real absolute path, following symlinks that exist. */
+function realTarget(base, p) {
+  const abs = path.resolve(base, expandHome(p))
+  const tail = []
+  for (let probe = abs; ; ) {
+    try {
+      return path.join(fs.realpathSync(probe), ...tail)
+    } catch {
+      const parent = path.dirname(probe)
+      if (parent === probe) return abs
+      tail.unshift(path.basename(probe)) // a file that doesn't exist yet: check its folder
+      probe = parent
+    }
+  }
+}
+
+/** Is `p` (default: the current folder) inside `root`? */
+export function insideRepo(root, p, base = root) {
+  const s = p == null || p === '' ? '.' : String(p)
+  if (s.includes('$')) return false
+  const t = realTarget(base ?? root, s)
+  return t === root || t.startsWith(root + path.sep)
+}
+
+// The path fields of the tools that read, and of those that edit.
+const READ_PATHS = { Read: ['file_path'], NotebookRead: ['notebook_path'], LS: ['path'], Glob: ['path'], Grep: ['path'] }
+
+/** A read-only tool call that stays inside `root`. */
+export function readsInsideRepo(root, name, input = {}, cwd = root) {
+  const keys = READ_PATHS[name]
+  if (!keys) return true // TodoWrite, Task… touch no files
+  if (!keys.every((k) => insideRepo(root, input[k], cwd))) return false
+  if (name === 'Glob' && input.pattern) {
+    // The folder part of the pattern itself ("../**", "/Users/x/**/*.env").
+    const head = String(input.pattern).split(/[*?[{]/)[0]
+    const dir = head.includes('/') ? head.slice(0, head.lastIndexOf('/') + 1) : ''
+    const target = path.isAbsolute(dir) || dir.startsWith('~') ? dir : path.join(input.path ?? '.', dir || '.')
+    return insideRepo(root, target, cwd)
+  }
+  return true
+}
+
+/** An edit whose target file is inside `root`. */
+export function editsInsideRepo(root, input = {}, cwd = root) {
+  const target = input.file_path ?? input.notebook_path
+  return Boolean(target) && insideRepo(root, target, cwd)
 }
 const PERMISSION_WAIT_MS = 570_000 // answer before Claude Code's 600 s hook timeout
 
 const SYSTEM_NOTE = [
   'You are running headless inside AI Lounge, a dashboard the user watches.',
-  'Every tool call you make shows up live in the lounge. Read-only tools run freely;',
-  'file edits and shell commands wait for the user to press Allow or Deny there.',
-  'Prefer the Read, Glob and Grep tools for looking around; they never need approval.',
+  'Every tool call you make shows up live in the lounge. Reading inside this repo runs freely;',
+  'file edits, shell commands and reading anything outside the repo wait for the user to press',
+  'Allow or Deny there. Prefer the Read, Glob and Grep tools for looking around the repo.',
   'If a step is denied, do not retry it — say what you needed and why.',
   'Do not commit or push unless the user asks.',
   'Finish with a short plain summary: what you did and which files changed.',
@@ -174,6 +280,13 @@ function makeAgent(entry, dir) {
     accent: /^#[0-9a-f]{6}$/i.test(entry.accent ?? '') ? entry.accent : ACCENTS[agents.size % ACCENTS.length],
     blurb: entry.blurb ?? '',
     path: dir,
+    real: (() => {
+      try {
+        return fs.realpathSync(dir) // the boundary for reads and auto-edits
+      } catch {
+        return dir
+      }
+    })(),
     model: MODELS.has(s.model) ? s.model : MODELS.has(entry.model) ? entry.model : 'sonnet',
     effort: EFFORTS.has(s.effort) ? s.effort : EFFORTS.has(entry.effort) ? entry.effort : 'medium',
     autoEdits: Boolean(s.autoEdits ?? entry.autoEdits ?? false),
@@ -455,8 +568,13 @@ function permissionRequest(a, payload) {
   if (name === 'Bash') {
     summary = 'Run a shell command'
     detail = String(input.command ?? '')
+  } else if (READ_PATHS[name]) {
+    summary = name === 'Read' || name === 'NotebookRead' ? 'Read a file outside the repo' : 'Look outside the repo'
+    detail = String(input.file_path ?? input.notebook_path ?? [input.path, input.pattern].filter(Boolean).join('  '))
   } else if (EDIT_TOOLS.has(name)) {
-    summary = `${name === 'Write' ? 'Create or overwrite' : 'Edit'} ${rel(a, input.file_path ?? input.notebook_path)}`
+    const target = input.file_path ?? input.notebook_path
+    const outside = target && !insideRepo(a.real, target)
+    summary = `${name === 'Write' ? 'Create or overwrite' : 'Edit'} ${rel(a, target)}${outside ? ' (outside the repo)' : ''}`
     if (name === 'Write') detail = clip(input.content ?? '', 1200)
     else if (name === 'Edit') detail = `- ${clip(input.old_string ?? '', 500)}\n+ ${clip(input.new_string ?? '', 500)}`
     else if (name === 'MultiEdit') detail = `${(input.edits ?? []).length} edits`
@@ -494,15 +612,21 @@ function decision(allow, reason) {
 
 function onPreToolUse(a, payload) {
   const name = payload.tool_name
-  if (READ_ONLY.has(name)) return Promise.resolve(decision(true, 'read-only'))
+  const input = payload.tool_input ?? {}
+  const cwd = typeof payload.cwd === 'string' && payload.cwd ? payload.cwd : a.real
+  if (READ_ONLY.has(name) && readsInsideRepo(a.real, name, input, cwd)) {
+    return Promise.resolve(decision(true, 'read-only, inside the repo'))
+  }
   if (name === 'AskUserQuestion' || name === 'ExitPlanMode') {
     return Promise.resolve(
       decision(false, 'There is no interactive prompt here — ask your question in your final message instead.'),
     )
   }
-  if (a.autoEdits && EDIT_TOOLS.has(name)) return Promise.resolve(decision(true, 'auto-approved edit'))
-  if (name === 'Bash' && isReadOnlyShell(payload.tool_input?.command)) {
-    return Promise.resolve(decision(true, 'read-only shell command'))
+  if (a.autoEdits && EDIT_TOOLS.has(name) && editsInsideRepo(a.real, input, cwd)) {
+    return Promise.resolve(decision(true, 'auto-approved edit inside the repo'))
+  }
+  if (name === 'Bash' && isReadOnlyShell(input.command, a.real, cwd)) {
+    return Promise.resolve(decision(true, 'read-only shell command inside the repo'))
   }
   // Hold the step until the user answers in the lounge.
   const request = permissionRequest(a, payload)

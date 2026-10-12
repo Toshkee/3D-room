@@ -91,9 +91,13 @@ plus roster / removed / permission / run stats / connection), and
 - **Approvals:** every tool call hits a `PreToolUse` **HTTP hook** pointing back
   at the server (`/api/hooks/pretool`, random per-process token,
   `onFailure: "block"`). Read-only tools and read-only shell commands
-  (`isReadOnlyShell`, deliberately conservative) are allowed at once; edits
-  (unless the bot's *Auto-approve edits* is on) and everything else are held
-  open until the user presses **Allow / Deny**. A waiting bot has status
+  (`isReadOnlyShell`, deliberately conservative) are allowed at once **only
+  inside the bot's repo** (`readsInsideRepo` / `insideRepo`: paths resolve from
+  the hook's `cwd`, symlinks are followed, `~`, `..`, `$VARS`, bare `cd`, a
+  shell already outside the repo all count as outside); *Auto-approve edits*
+  likewise only covers files inside the repo (`editsInsideRepo`). Everything
+  else — reading outside the repo, edits, commands, web — is held open until
+  the user presses **Allow / Deny**. A waiting bot has status
   **`waiting`** ("Needs you"): it raises a hand, its ring pulses amber, the tab
   title shows `(n) AI Lounge`, the Dashboard tab shows a count, and an
   attention sound plays.
